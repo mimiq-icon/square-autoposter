@@ -116,6 +116,61 @@ const IMAGE_MAX_POLL_RETRIES = 10;
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash";
 const GEMINI_ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 
+// ---------------------------------------------------------------------------
+// v4: MULTI-PROVIDER AI CHAIN
+// ---------------------------------------------------------------------------
+// The Writer stage now tries multiple AI providers in order, falling back
+// on ANY failure (rate limit, network error, validation failure, etc.).
+//
+// Provider order (first to last):
+//   1. Groq       — free, fast, Llama 3.3 70B. Primary.
+//   2. OpenRouter — free models available (Llama, Gemini, Mistral via one API). Fallback.
+//   3. Gemini     — free, was flaky. Last resort.
+//   4. Template   — if all AI providers fail (existing fallback, unchanged).
+//
+// Each provider is independent. Set only the secrets you have. If you only
+// have GROQ_API_KEY, only Groq is tried (then template fallback). If you
+// have all three, they're tried in order until one succeeds.
+//
+// Optional model overrides via env vars:
+//   GROQ_MODEL         (default: llama-3.3-70b-versatile)
+//   OPENROUTER_MODEL   (default: meta-llama/llama-3.3-70b-instruct:free)
+//   GEMINI_MODEL       (default: gemini-2.0-flash)
+// ---------------------------------------------------------------------------
+const GROQ_BASE_URL = "https://api.groq.com/openai/v1";
+const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
+
+const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
+// OpenRouter default: free Llama 3.3 70B. Other free options:
+//   "google/gemini-2.0-flash-exp:free"
+//   "mistralai/mistral-7b-instruct:free"
+//   "meta-llama/llama-3.1-8b-instruct:free"
+// Browse all at openrouter.ai/models (filter for "free")
+const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || "meta-llama/llama-3.3-70b-instruct:free";
+
+// Provider chain — order matters. Groq first (free + fast), OpenRouter second
+// (free models via aggregator), Gemini last (free but was problematic).
+const AI_PROVIDERS = [
+  {
+    name: "groq",
+    envKey: "GROQ_API_KEY",
+    model: GROQ_MODEL,
+    callFn: (prompt, key, model) => callOpenAICompatible(prompt, key, model, GROQ_BASE_URL),
+  },
+  {
+    name: "openrouter",
+    envKey: "OPENROUTER_API_KEY",
+    model: OPENROUTER_MODEL,
+    callFn: (prompt, key, model) => callOpenAICompatible(prompt, key, model, OPENROUTER_BASE_URL),
+  },
+  {
+    name: "gemini",
+    envKey: "GEMINI_API_KEY",
+    model: GEMINI_MODEL,
+    callFn: (prompt, key, model) => callGemini(prompt, key, model),
+  },
+];
+
 // Free, no-key chart rendering service (quickchart.io).
 const QUICKCHART_ENDPOINT = "https://quickchart.io/chart";
 
@@ -519,17 +574,20 @@ function isSafeAiText(text, allowedSymbols) {
   return true;
 }
 
-async function callGemini(prompt) {
-  const key = process.env.GEMINI_API_KEY;
+// v4: Updated to accept key and model params so it matches the provider
+// interface. When called directly (old behavior), falls back to env vars.
+async function callGemini(prompt, key, model) {
+  key = key || process.env.GEMINI_API_KEY;
+  model = model || GEMINI_MODEL;
   if (!key) return null;
 
-  // v3.3 FIX: gemini-2.5-* models are "thinking" models that burn tokens
-  // on internal reasoning. If using a 2.5 model, disable thinking via
-  // thinkingConfig (thinkingBudget: 0) so all tokens go to output.
-  // For 2.0 and earlier models, thinkingConfig is ignored (they don't think).
-  const isThinkingModel = GEMINI_MODEL.includes("2.5");
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+
+  // gemini-2.5-* models are "thinking" models that burn tokens on internal
+  // reasoning. If using a 2.5 model, disable thinking via thinkingConfig.
+  const isThinkingModel = model.includes("2.5");
   const generationConfig = {
-    maxOutputTokens: 800,  // v3.3: bumped from 500 to 800 for safety margin
+    maxOutputTokens: 800,
     temperature: 0.4,
     topP: 0.9,
   };
@@ -537,7 +595,7 @@ async function callGemini(prompt) {
     generationConfig.thinkingConfig = { thinkingBudget: 0 };
   }
 
-  const res = await fetch(`${GEMINI_ENDPOINT}?key=${key}`, {
+  const res = await fetch(`${endpoint}?key=${key}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -547,29 +605,98 @@ async function callGemini(prompt) {
   });
 
   if (!res.ok) {
-    console.log(`Gemini API non-OK response: ${res.status}`);
-    // Log response body for non-OK to help diagnose model availability issues
-    try {
-      const errBody = await res.text();
-      console.log(`Gemini error body: ${errBody.substring(0, 300)}`);
-    } catch {}
-    return null;
+    const errBody = await res.text().catch(() => "");
+    throw new Error(`Gemini HTTP ${res.status}: ${errBody.substring(0, 200)}`);
   }
 
   const data = await res.json();
   const candidate = data?.candidates?.[0];
 
-  // Check finishReason. If Gemini stopped due to SAFETY, RECITATION,
-  // MAX_TOKENS, or OTHER, the output is likely truncated or incomplete.
-  // Log it and return null so the caller falls back to template mode.
   const finishReason = candidate?.finishReason;
   if (finishReason && finishReason !== "STOP") {
-    console.log(`Gemini finishReason: ${finishReason} (output likely incomplete, rejecting).`);
-    return null;
+    throw new Error(`Gemini finishReason: ${finishReason}`);
   }
 
-  const text = candidate?.content?.parts?.[0]?.text;
-  return text || null;
+  return candidate?.content?.parts?.[0]?.text || null;
+}
+
+// v4 NEW: OpenAI-compatible API caller. Works for both Groq and OpenAI
+// (they use the same chat completions format, just different base URLs).
+// Throws on any error so the caller can catch and fall back to next provider.
+async function callOpenAICompatible(prompt, key, model, baseUrl) {
+  if (!key) return null;
+
+  const res = await fetch(`${baseUrl}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${key}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: 800,
+      temperature: 0.4,
+      top_p: 0.9,
+    }),
+  });
+
+  if (!res.ok) {
+    const errBody = await res.text().catch(() => "");
+    throw new Error(`${model} HTTP ${res.status}: ${errBody.substring(0, 200)}`);
+  }
+
+  const data = await res.json();
+  const choice = data?.choices?.[0];
+  if (!choice) throw new Error("No choices in response");
+
+  // Check finish_reason. "stop" is normal; "length" = hit max_tokens;
+  // "content_filter" = safety filter triggered. Reject anything != "stop".
+  const finishReason = choice.finish_reason;
+  if (finishReason && finishReason !== "stop") {
+    throw new Error(`${model} finish_reason: ${finishReason}`);
+  }
+
+  return choice.message?.content || null;
+}
+
+// v4 NEW: Try each AI provider in order. Returns { text, provider } on
+// success, or null if all providers fail or return invalid output.
+// Validation (isSafeAiText) runs on each provider's output before accepting.
+async function callAiWithFallback(prompt, allowedSymbols) {
+  for (const provider of AI_PROVIDERS) {
+    const key = process.env[provider.envKey];
+    if (!key) {
+      console.log(`  ${provider.name}: no API key set, skipping.`);
+      continue;
+    }
+
+    console.log(`  Trying ${provider.name} (${provider.model})...`);
+
+    try {
+      const raw = await provider.callFn(prompt, key, provider.model);
+      if (!raw) {
+        console.log(`  ${provider.name}: no output returned.`);
+        continue;
+      }
+      console.log(`  ${provider.name}: got ${raw.length} chars.`);
+
+      const cleaned = raw.trim();
+      if (!isSafeAiText(cleaned, allowedSymbols)) {
+        console.log(`  ${provider.name}: output failed validation.`);
+        continue;
+      }
+
+      console.log(`  ${provider.name}: SUCCESS (validated).`);
+      return { text: cleaned, provider: provider.name };
+    } catch (err) {
+      console.log(`  ${provider.name}: ${err.message}`);
+      continue;
+    }
+  }
+
+  console.log(`  All AI providers failed or returned invalid output. Falling back to template.`);
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -661,19 +788,14 @@ async function buildAiPost(data, dayIndex, style, ctx = {}) {
     "Output ONLY the post text. No preamble, no quotes, no markdown, no explanation.",
   ].join("\n");
 
-  try {
-    const raw = await callGemini(prompt);
-    if (!raw) return null;
-    const cleaned = raw.trim();
-    if (!isSafeAiText(cleaned, allowedSymbols)) {
-      console.log("AI output failed validation, falling back to template.");
-      return null;
-    }
-    return cleaned;
-  } catch (err) {
-    console.log(`Gemini call failed (${err.message}), falling back to template.`);
-    return null;
+  // v4: Use multi-provider fallback chain instead of single Gemini call.
+  // callAiWithFallback tries Groq → OpenAI → Gemini, returns { text, provider }
+  // or null if all fail. Validation runs inside the chain on each provider's output.
+  const result = await callAiWithFallback(prompt, allowedSymbols);
+  if (result) {
+    return result.text;  // main() will use this as the post text
   }
+  return null;  // all providers failed — main() falls back to template
 }
 
 // ===========================================================================
@@ -1142,7 +1264,21 @@ async function main() {
   const now = new Date();
   const dayIndex = now.getDate();
   const isSunday = now.getDay() === 0;
-  const aiEnabled = Boolean(process.env.GEMINI_API_KEY);
+
+  // v4: AI is enabled if ANY provider key is set (Groq, OpenAI, or Gemini)
+  const aiEnabled = Boolean(
+    process.env.GROQ_API_KEY || process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY
+  );
+
+  // v4: Log available providers at startup so you can see which are configured
+  const configuredProviders = AI_PROVIDERS
+    .filter(p => process.env[p.envKey])
+    .map(p => p.name);
+  if (configuredProviders.length > 0) {
+    console.log(`AI providers configured: ${configuredProviders.join(", ")}`);
+  } else {
+    console.log(`No AI providers configured — using template mode only.`);
+  }
 
   // --- Sunday: weekly ARTICLE (v3) with chart as cover image ---
   // Fallback ladder: article+chart → article-only → chart-only → text recap
@@ -1191,9 +1327,14 @@ async function main() {
     return;
   }
 
-  // --- Weekday: smart template selection ---
+  // ===========================================================================
+  // STAGE 1: RESEARCH — gather data from all free sources
+  // ===========================================================================
+  console.log(`\n=== STAGE 1: RESEARCH (data gathering) ===`);
+
   // Always fetch core market data first — most templates need it.
   const data = await getMarketData();
+  console.log(`  CoinGecko markets: ${data.length} coins fetched.`);
 
   // Gather supplementary data. Each fetch is independent and fails gracefully
   // — if one source is down, the others still work and the script picks the
@@ -1206,89 +1347,111 @@ async function main() {
   try {
     anomalies = await getBinanceAnomalies();
     if (anomalies.length > 0) {
-      console.log(`Anomaly scan: found ${anomalies.length} coin(s) with |24h change| >= ${ANOMALY_THRESHOLD_PCT}%.`);
+      console.log(`  Binance ticker: found ${anomalies.length} anomaly/anomalies (|24h| >= ${ANOMALY_THRESHOLD_PCT}%).`);
     } else {
-      console.log(`Anomaly scan: nothing unusual (threshold ${ANOMALY_THRESHOLD_PCT}%).`);
+      console.log(`  Binance ticker: nothing unusual (threshold ${ANOMALY_THRESHOLD_PCT}%).`);
     }
   } catch (e) {
-    console.log(`Anomaly scan skipped: ${e.message}`);
+    console.log(`  Binance ticker: skipped (${e.message}).`);
   }
 
   try {
     trending = await getTrendingCoins();
-    console.log(`Trending: found ${trending.length} top-100 coin(s).`);
+    console.log(`  CoinGecko trending: ${trending.length} top-100 coin(s).`);
   } catch (e) {
-    console.log(`Trending fetch skipped: ${e.message}`);
+    console.log(`  CoinGecko trending: skipped (${e.message}).`);
   }
 
   try {
     globalMarket = await getGlobalMarket();
-    console.log(`Global market: cap ${fmtMcap(globalMarket.totalMcap)}, BTC dom ${globalMarket.btcDominance.toFixed(1)}%.`);
+    console.log(`  CoinGecko global: cap ${fmtMcap(globalMarket.totalMcap)}, BTC dom ${globalMarket.btcDominance.toFixed(1)}%.`);
   } catch (e) {
-    console.log(`Global market fetch skipped: ${e.message}`);
+    console.log(`  CoinGecko global: skipped (${e.message}).`);
   }
 
   try {
     fng = await getFearGreed();
-    console.log(`Fear & Greed: ${fng.value}/100 (${fng.classification}).`);
+    console.log(`  Fear & Greed: ${fng.value}/100 (${fng.classification}).`);
   } catch (e) {
-    console.log(`Fear & Greed fetch skipped: ${e.message}`);
+    console.log(`  Fear & Greed: skipped (${e.message}).`);
   }
 
-  // --- Smart template selection ---
-  // Priority 1: Anomaly — if something is genuinely moving >10%, lead with that.
-  // Priority 2: Extreme sentiment — if F&G is at extreme, that's newsworthy.
-  // Priority 3: Rotate through macro / trending / snapshot / mover / educational.
+  // ===========================================================================
+  // STAGE 2: STRATEGIST — pick the content angle based on what data shows
+  // ===========================================================================
+  console.log(`\n=== STAGE 2: STRATEGIST (template selection) ===`);
+
   let style = null;
   const ctx = { globalMarket, fng, anomalies, trending };
 
   if (anomalies && anomalies.length > 0) {
     style = "anomaly";
+    console.log(`  Decision: anomaly detected → "anomaly" template.`);
   } else if (fng && (fng.value <= EXTREME_FEAR_THRESHOLD || fng.value >= EXTREME_GREED_THRESHOLD)) {
     style = "sentiment";
+    console.log(`  Decision: extreme sentiment (${fng.value}/100) → "sentiment" template.`);
   } else {
     const rotation = ["macro", "trending", "snapshot", "mover", "educational"];
     style = rotation[dayIndex % rotation.length];
+    console.log(`  Decision: no anomaly/extreme sentiment, day ${dayIndex} → rotation "${style}".`);
   }
 
-  console.log(`Selected template: ${style}`);
+  // ===========================================================================
+  // STAGE 3: WRITER — generate post text (AI with multi-provider fallback,
+  // then template fallback)
+  // ===========================================================================
+  console.log(`\n=== STAGE 3: WRITER (text generation) ===`);
 
-  // --- Try AI mode first (if enabled) ---
   let text = null;
   let source = "template";
 
   if (aiEnabled) {
+    console.log(`  Attempting AI generation...`);
     text = await buildAiPost(data, dayIndex, style, ctx);
-    if (text) source = "ai";
+    if (text) {
+      source = "ai";
+      console.log(`  AI generation succeeded.`);
+    } else {
+      console.log(`  AI generation failed — falling back to template.`);
+    }
+  } else {
+    console.log(`  AI mode disabled (no provider keys) — using template directly.`);
   }
 
-  // --- Fall back to template if AI failed or wasn't enabled ---
   if (!text) {
     text = buildTemplatePost(data, dayIndex, style, ctx);
     source = aiEnabled ? "template (ai fallback)" : "template";
+    console.log(`  Template built (${text.length} chars).`);
   }
 
-  // --- If the chosen template couldn't be built (missing data), fall back
-  //     to snapshot, which only needs the core market data we already have.
+  // If the chosen template couldn't be built (missing data), fall back
+  // to snapshot, which only needs the core market data we already have.
   if (!text) {
-    console.log(`Template "${style}" produced no text (missing data), falling back to snapshot.`);
+    console.log(`  Template "${style}" produced no text (missing data) — snapshot fallback.`);
     text = buildSnapshotPost(data, dayIndex);
     source = "template (snapshot fallback)";
   }
 
   if (!text) throw new Error("Could not build post text \u2014 check CoinGecko response.");
 
-  console.log(`--- Post preview (source: ${source}) ---`);
+  console.log(`\n--- Post preview (source: ${source}) ---`);
   console.log(text);
-  console.log("--------------------");
+  console.log(`--------------------`);
+
+  // ===========================================================================
+  // STAGE 4: PUBLISHER — send to Binance Square
+  // ===========================================================================
+  console.log(`\n=== STAGE 4: PUBLISHER (Binance Square) ===`);
+  console.log(`  Posting ${text.length} chars as contentType: 1 (text)...`);
 
   const id = await postToSquare(text);
   if (isDryRun()) {
-    console.log(`[DRY RUN] No post was actually published. Verify the payload above looks correct, then re-run with dry_run unchecked.`);
+    console.log(`  [DRY RUN] No post was actually published.`);
+    console.log(`  Re-run with dry_run unchecked to publish for real.`);
   } else if (id && id !== "dry-run-id") {
-    console.log(`Posted! View it at: https://www.binance.com/square/post/${id}`);
+    console.log(`  SUCCESS — posted! View at: https://www.binance.com/square/post/${id}`);
   } else {
-    console.log("Post likely succeeded, but no ID was returned in the response.");
+    console.log(`  Post likely succeeded, but no ID was returned in the response.`);
   }
 }
 

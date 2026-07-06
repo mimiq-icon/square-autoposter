@@ -625,6 +625,27 @@ function buildTemplatePost(data, dayIndex, style, ctx = {}) {
 // ===========================================================================
 
 async function squareApi(endpoint, apiKey, body, baseUrl = SQUARE_BASE_V2) {
+  // DRY RUN GATE (v3.1): the single source of truth for dry-run mode.
+  // Every Binance API call goes through this function, so checking here
+  // covers ALL code paths: text posts, article posts, image uploads,
+  // image status polls, content publishing. No path can bypass dry-run.
+  if (isDryRun() && endpoint !== "/image/imageStatus") {
+    // Allow image status polling in dry run so the upload flow can be tested
+    // end-to-end without posting. But block presignedUrl (would upload to S3)
+    // and content/add (would publish).
+    if (endpoint === "/image/presignedUrl") {
+      console.log(`[DRY RUN] Would request presigned S3 URL for image upload. Skipping.`);
+      return { presignedUrl: "https://dry-run.example.com/dummy-url", fileTicket: "dry-run-ticket" };
+    }
+    if (endpoint === "/content/add") {
+      console.log(`[DRY RUN] Would publish to Binance Square. Skipping.`);
+      console.log(`[DRY RUN] Payload:`, JSON.stringify(body, null, 2));
+      return { id: "dry-run-id", shareLink: "https://www.binance.com/square/post/dry-run" };
+    }
+    console.log(`[DRY RUN] Would call Square API ${endpoint}. Skipping.`);
+    return {};
+  }
+
   const res = await fetch(`${baseUrl}${endpoint}`, {
     method: "POST",
     headers: {
@@ -652,9 +673,21 @@ async function squareApi(endpoint, apiKey, body, baseUrl = SQUARE_BASE_V2) {
   return json.data;
 }
 
+// Helper: dry-run flag check, centralized so it can't drift.
+function isDryRun() {
+  return process.env.DRY_RUN === "true" || process.env.DRY_RUN === "1";
+}
+
 async function uploadImageToSquare(apiKey, filePath) {
   const imageName = path.basename(filePath);
   const { presignedUrl, fileTicket } = await squareApi("/image/presignedUrl", apiKey, { imageName });
+
+  // DRY RUN: skip the actual S3 PUT — the presignedUrl is a dummy.
+  if (isDryRun()) {
+    console.log(`[DRY RUN] Would PUT ${imageName} to S3. Skipping actual upload.`);
+    // Skip polling too — return a dummy URL.
+    return "https://dry-run.example.com/uploaded-image.png";
+  }
 
   const fileBuffer = fs.readFileSync(filePath);
   const putRes = await fetch(presignedUrl, {
@@ -804,17 +837,14 @@ async function postToSquare(text) {
   }
   const safeText = enforceMaxLength(text);
 
-  // DRY_RUN mode: print what would be sent, don't actually post.
-  // Useful for testing format changes without burning a daily post.
-  // Enable by setting DRY_RUN=true in your GitHub Actions workflow input
-  // or as an environment variable in the workflow's env: block.
-  if (process.env.DRY_RUN === "true" || process.env.DRY_RUN === "1") {
-    console.log("=== DRY RUN — not posting to Binance ===");
+  // v3.1: dry-run is now handled centrally in squareApi(). This function
+  // still logs the payload for visibility, but the actual gate is below.
+  if (isDryRun()) {
+    console.log(`=== DRY RUN (TEXT POST) — not posting to Binance ===`);
     console.log(`Payload contentType: ${CONTENT_TYPE_TEXT}`);
     console.log(`Payload bodyTextOnly (${safeText.length} chars):`);
     console.log(safeText);
-    console.log("=== END DRY RUN ===");
-    return null;
+    console.log(`=== END DRY RUN ===`);
   }
 
   // v3 FIX: explicitly set contentType: 1 for text posts.
@@ -845,16 +875,16 @@ async function postArticleToSquare(title, body, coverImageUrl = null) {
     payload.coverImageList = [coverImageUrl];
   }
 
-  // DRY_RUN mode: print the article payload without posting.
-  if (process.env.DRY_RUN === "true" || process.env.DRY_RUN === "1") {
-    console.log("=== DRY RUN (ARTICLE) — not posting to Binance ===");
+  // v3.1: dry-run is now handled centrally in squareApi(). This function
+  // still logs the article payload for visibility.
+  if (isDryRun()) {
+    console.log(`=== DRY RUN (ARTICLE) — not posting to Binance ===`);
     console.log(`Title: ${title}`);
     console.log(`Body length: ${body.length} chars`);
     console.log(`Cover image: ${coverImageUrl ? "yes" : "no"}`);
-    console.log("--- Body ---");
+    console.log(`--- Body ---`);
     console.log(body);
-    console.log("=== END DRY RUN ===");
-    return null;
+    console.log(`=== END DRY RUN ===`);
   }
 
   const data = await publishToSquare(key, payload);
@@ -997,7 +1027,11 @@ async function tryWeeklyArticlePost(data, dayIndex, key, ctx) {
     console.log(`Title: ${article.title}`);
     console.log(`Body length: ${article.body.length} chars`);
     console.log(`Cover image: ${coverImageUrl ? "yes" : "no"}`);
-    if (id) console.log(`Posted! View it at: https://www.binance.com/square/post/${id}`);
+    if (isDryRun()) {
+      console.log(`[DRY RUN] No article was actually published. Verify the payload above looks correct, then re-run with dry_run unchecked.`);
+    } else if (id && id !== "dry-run-id") {
+      console.log(`Posted! View it at: https://www.binance.com/square/post/${id}`);
+    }
     return { id, isArticle: true };
   } catch (err) {
     console.log(`Article post failed (${err.message}), falling back to chart-only post.`);
@@ -1042,8 +1076,12 @@ async function main() {
     const imageResult = await tryWeeklyImagePost(data, dayIndex, key);
     if (imageResult) {
       console.log(`--- Posted weekly chart image (source: image, article fallback) ---`);
-      console.log(`ID: ${imageResult.id ?? "unavailable"}`);
-      console.log(`Link: ${imageResult.shareLink ?? (imageResult.id ? `https://www.binance.com/square/post/${imageResult.id}` : "unavailable")}`);
+      if (isDryRun()) {
+        console.log(`[DRY RUN] No image post was actually published.`);
+      } else {
+        console.log(`ID: ${imageResult.id ?? "unavailable"}`);
+        console.log(`Link: ${imageResult.shareLink ?? (imageResult.id ? `https://www.binance.com/square/post/${imageResult.id}` : "unavailable")}`);
+      }
       return;
     }
 
@@ -1053,8 +1091,13 @@ async function main() {
     console.log(text);
     console.log("--------------------");
     const id = await postToSquare(text);
-    if (id) console.log(`Posted! View it at: https://www.binance.com/square/post/${id}`);
-    else console.log("Post likely succeeded, but no ID was returned in the response.");
+    if (isDryRun()) {
+      console.log(`[DRY RUN] No post was actually published.`);
+    } else if (id && id !== "dry-run-id") {
+      console.log(`Posted! View it at: https://www.binance.com/square/post/${id}`);
+    } else {
+      console.log("Post likely succeeded, but no ID was returned in the response.");
+    }
     return;
   }
 
@@ -1150,7 +1193,9 @@ async function main() {
   console.log("--------------------");
 
   const id = await postToSquare(text);
-  if (id) {
+  if (isDryRun()) {
+    console.log(`[DRY RUN] No post was actually published. Verify the payload above looks correct, then re-run with dry_run unchecked.`);
+  } else if (id && id !== "dry-run-id") {
     console.log(`Posted! View it at: https://www.binance.com/square/post/${id}`);
   } else {
     console.log("Post likely succeeded, but no ID was returned in the response.");

@@ -11,9 +11,21 @@
 // templates — the bot never goes a day without posting just because the AI
 // step had a bad day.
 //
+// NEW: Sunday's weekly recap is now posted as an IMAGE post — a real 7-day
+// chart rendered from the same CoinGecko data, using Binance's own official
+// upload flow (presigned URL -> S3 upload -> poll -> publish), vendored from
+// https://github.com/binance/binance-skills-hub (skills/binance/square-post).
+// If chart rendering or image upload fails for any reason, it silently falls
+// back to the original plain-text weekly recap. Nothing about weekday posts
+// changes.
+//
 // Requires: Node.js 18+ (built-in fetch). No npm install needed.
 // Required env var: BINANCE_SQUARE_OPENAPI_KEY
 // Optional env var: GEMINI_API_KEY (get one free, no card, at aistudio.google.com/apikey)
+
+import fs from "fs";
+import os from "os";
+import path from "path";
 
 const COINS = [
   { id: "bitcoin", symbol: "BTC" },
@@ -27,13 +39,21 @@ const COINS = [
 // exceeds the allowed limit"). Keep every post at or under this number.
 const MAX_CASHTAGS_PER_POST = 3;
 
-const SQUARE_ENDPOINT =
-  "https://www.binance.com/bapi/composite/v1/public/pgc/openApi/content/add";
+// --- Binance Square OpenAPI (official endpoints, vendored from Binance's own
+// published skill: github.com/binance/binance-skills-hub) ---
+const SQUARE_BASE_V1 = "https://www.binance.com/bapi/composite/v1/public/pgc/openApi";
+const SQUARE_BASE_V2 = "https://www.binance.com/bapi/composite/v2/public/pgc/openApi";
+const IMAGE_POLL_INTERVAL_MS = 3000;
+const IMAGE_MAX_POLL_RETRIES = 10;
 
 // Free-tier-eligible model as of 2026. Override with GEMINI_MODEL if Google
 // changes free-tier eligibility later.
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
 const GEMINI_ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+
+// Free, no-key chart rendering service (quickchart.io). Used only to draw
+// the weekly chart image — never touches your API keys or account.
+const QUICKCHART_ENDPOINT = "https://quickchart.io/chart";
 
 // Phrases that turn a factual update into an implicit trading suggestion.
 // This matters more here than in typical content: the "Write to Earn" model
@@ -50,9 +70,10 @@ const BANNED_PHRASES = [
   "sell now", "buy now", "moon", "to the moon", "100x", "get in now",
 ];
 
-async function getMarketData() {
+async function getMarketData({ sparkline = false } = {}) {
   const ids = COINS.map((c) => c.id).join(",");
-  const url = `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=${ids}&price_change_percentage=24h,7d`;
+  const sparklineParam = sparkline ? "&sparkline=true" : "";
+  const url = `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=${ids}&price_change_percentage=24h,7d${sparklineParam}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`CoinGecko error: ${res.status}`);
   const rows = await res.json();
@@ -68,6 +89,7 @@ async function getMarketData() {
       price: d.current_price,
       change24h: d.price_change_percentage_24h_in_currency,
       change7d: d.price_change_percentage_7d_in_currency,
+      sparkline7d: d.sparkline_in_7d?.price || null,
     };
   }).filter(Boolean);
 }
@@ -153,6 +175,18 @@ function buildWeeklyRecapPost(data, dayIndex) {
     ...lines,
     "",
     "7-day view, not a forecast. Always DYOR.",
+  ].join("\n");
+}
+
+// Shorter caption variant for the image post — the chart itself carries the
+// per-coin numbers, so the caption doesn't need to repeat every line.
+function buildWeeklyImageCaption(featured) {
+  const tags = featured.map((d) => `$${d.symbol}`).join(" ");
+  return [
+    "\uD83D\uDCC8 7-day chart: " + tags,
+    "Normalized % change so different price scales are easy to compare at a glance.",
+    "",
+    "Chart only, not a forecast. Always DYOR.",
   ].join("\n");
 }
 
@@ -251,7 +285,164 @@ async function buildAiPost(data, dayIndex, style) {
 }
 
 // ---------------------------------------------------------------------------
-// Posting
+// Weekly chart image (new) — renders a real PNG from real 7-day data, then
+// posts it using Binance's own official upload flow. Every function in this
+// section is adapted from Binance's published skill at
+// github.com/binance/binance-skills-hub (skills/binance/square-post/scripts/lib.mjs),
+// not hand-guessed — Binance's own docs specifically warn against
+// hand-coding this upload flow, so we reuse their logic rather than invent it.
+// ---------------------------------------------------------------------------
+
+async function squareApi(endpoint, apiKey, body, baseUrl = SQUARE_BASE_V2) {
+  const res = await fetch(`${baseUrl}${endpoint}`, {
+    method: "POST",
+    headers: {
+      "X-Square-OpenAPI-Key": apiKey,
+      "Content-Type": "application/json",
+      clienttype: "binanceSkill",
+    },
+    body: JSON.stringify(body),
+  });
+  const raw = await res.text();
+
+  if (endpoint === "/content/add" && res.status === 504) {
+    // Binance's docs note this can happen even on a successful publish.
+    return { id: null, shareLink: null, publishStatus: "success_without_post_id" };
+  }
+
+  let json;
+  try {
+    json = JSON.parse(raw);
+  } catch {
+    throw new Error(`Square API returned non-JSON response: ${res.status}`);
+  }
+  if (json.code !== "000000") {
+    throw new Error(`Square API error [${json.code}]: ${json.message}`);
+  }
+  return json.data;
+}
+
+async function uploadImageToSquare(apiKey, filePath) {
+  const imageName = path.basename(filePath);
+  const { presignedUrl, fileTicket } = await squareApi("/image/presignedUrl", apiKey, { imageName });
+
+  const fileBuffer = fs.readFileSync(filePath);
+  const putRes = await fetch(presignedUrl, {
+    method: "PUT",
+    headers: { "Content-Type": "image/png" },
+    body: fileBuffer,
+  });
+  if (!putRes.ok) throw new Error(`S3 upload failed: ${putRes.status}`);
+
+  for (let i = 0; i < IMAGE_MAX_POLL_RETRIES; i++) {
+    const status = await squareApi("/image/imageStatus", apiKey, { fileTicket });
+    if (status.status === 1) return status.imageUrl;
+    if (status.status === 2) throw new Error(`Image processing failed: ${status.failedReason}`);
+    await new Promise((r) => setTimeout(r, IMAGE_POLL_INTERVAL_MS));
+  }
+  throw new Error("Image processing poll timed out");
+}
+
+async function publishToSquare(apiKey, body) {
+  return squareApi("/content/add", apiKey, body, SQUARE_BASE_V1);
+}
+
+// Builds a Chart.js config for a normalized (% change from day 0) 7-day
+// line chart, so coins with very different price scales (e.g. BTC vs XRP)
+// are readable on one chart.
+function buildWeeklyChartConfig(featured) {
+  const COLORS = ["#F0B90B", "#627EEA", "#00FFA3"]; // BNB gold / ETH blue / a third accent
+  const datasets = featured
+    .filter((d) => Array.isArray(d.sparkline7d) && d.sparkline7d.length > 1)
+    .map((d, i) => {
+      const base = d.sparkline7d[0];
+      const points = d.sparkline7d.map((p) => (base ? ((p - base) / base) * 100 : 0));
+      return {
+        label: `$${d.symbol}`,
+        data: points,
+        borderColor: COLORS[i % COLORS.length],
+        backgroundColor: "transparent",
+        borderWidth: 2,
+        pointRadius: 0,
+        tension: 0.15,
+      };
+    });
+
+  if (datasets.length === 0) return null;
+
+  const pointCount = datasets[0].data.length;
+  const labels = Array.from({ length: pointCount }, (_, i) => {
+    const daysAgo = 7 - (i / pointCount) * 7;
+    return daysAgo <= 0.15 ? "now" : `-${daysAgo.toFixed(1)}d`;
+  });
+
+  return {
+    type: "line",
+    data: { labels, datasets },
+    options: {
+      title: { display: true, text: "7-Day Change (%)" },
+      legend: { display: true, position: "bottom" },
+      scales: {
+        xAxes: [{ ticks: { maxTicksLimit: 6 } }],
+        yAxes: [{ ticks: { callback: (v) => `${v}%` } }],
+      },
+    },
+  };
+}
+
+async function renderChartPng(chartConfig) {
+  const res = await fetch(QUICKCHART_ENDPOINT, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      chart: chartConfig,
+      width: 800,
+      height: 450,
+      backgroundColor: "#0B0E11", // Binance-dark background so it doesn't look out of place
+      format: "png",
+    }),
+  });
+  if (!res.ok) throw new Error(`QuickChart error: ${res.status}`);
+  const arrayBuffer = await res.arrayBuffer();
+  return Buffer.from(arrayBuffer);
+}
+
+// Tries the full image-post path. Returns the post id/link on success, or
+// null on ANY failure (bad sparkline data, chart render error, upload error,
+// publish error) so main() can fall back to the plain-text weekly recap.
+// This never throws — that's the point of a fallback.
+async function tryWeeklyImagePost(data, dayIndex, apiKey) {
+  try {
+    const featured = rotateSubset(data, MAX_CASHTAGS_PER_POST, dayIndex);
+    const chartConfig = buildWeeklyChartConfig(featured);
+    if (!chartConfig) {
+      console.log("No sparkline data available, skipping image post.");
+      return null;
+    }
+
+    const png = await renderChartPng(chartConfig);
+
+    const tmpFile = path.join(os.tmpdir(), `weekly-chart-${Date.now()}.png`);
+    fs.writeFileSync(tmpFile, png);
+
+    const imageUrl = await uploadImageToSquare(apiKey, tmpFile);
+    fs.unlinkSync(tmpFile);
+
+    const caption = buildWeeklyImageCaption(featured);
+    const result = await publishToSquare(apiKey, {
+      contentType: 1,
+      bodyTextOnly: caption,
+      imageList: [imageUrl],
+    });
+    return result;
+  } catch (err) {
+    console.log(`Weekly image post failed (${err.message}), falling back to text.`);
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Posting (plain text path — unchanged)
 // ---------------------------------------------------------------------------
 
 async function postToSquare(text) {
@@ -259,38 +450,34 @@ async function postToSquare(text) {
   if (!key) {
     throw new Error("Missing BINANCE_SQUARE_OPENAPI_KEY environment variable.");
   }
-
-  const res = await fetch(SQUARE_ENDPOINT, {
-    method: "POST",
-    headers: {
-      "X-Square-OpenAPI-Key": key,
-      "Content-Type": "application/json",
-      clienttype: "binanceSkill",
-    },
-    body: JSON.stringify({ bodyTextOnly: text }),
-  });
-
-  const data = await res.json();
-  if (data.code !== "000000") {
-    throw new Error(`Binance Square API error: ${data.code} ${data.message || ""}`);
-  }
-  return data.data?.id;
+  const data = await publishToSquare(key, { bodyTextOnly: text });
+  return data?.id;
 }
 
 async function main() {
-  const data = await getMarketData();
+  const key = process.env.BINANCE_SQUARE_OPENAPI_KEY;
+  if (!key) {
+    throw new Error("Missing BINANCE_SQUARE_OPENAPI_KEY environment variable.");
+  }
+
   const now = new Date();
   const dayIndex = now.getDate();
   const isSunday = now.getDay() === 0;
   const aiEnabled = Boolean(process.env.GEMINI_API_KEY);
 
+  const data = await getMarketData({ sparkline: isSunday });
+
   let text = null;
   let source = "template";
+  let imageResult = null;
 
   if (isSunday) {
-    // Weekly recap stays template-based: it's a fixed 7-day data readout,
-    // not a place where varied phrasing adds much.
-    text = buildWeeklyRecapPost(data, dayIndex);
+    imageResult = await tryWeeklyImagePost(data, dayIndex, key);
+    if (!imageResult) {
+      // Fallback: original plain-text weekly recap, unchanged.
+      text = buildWeeklyRecapPost(data, dayIndex);
+      source = "template (image fallback)";
+    }
   } else {
     const rotation = ["snapshot", "mover", "educational"];
     const style = rotation[dayIndex % rotation.length];
@@ -301,12 +488,17 @@ async function main() {
     }
 
     if (!text) {
-      // Either AI is disabled, or it failed/was rejected — use the
-      // corresponding safe template instead.
       const templateFn = { snapshot: buildSnapshotPost, mover: buildTopMoverPost, educational: buildEducationalPost }[style];
       text = style === "mover" ? templateFn(data) : templateFn(data, dayIndex);
       source = "template";
     }
+  }
+
+  if (imageResult) {
+    console.log(`--- Posted weekly chart image (source: image) ---`);
+    console.log(`ID: ${imageResult.id ?? "unavailable"}`);
+    console.log(`Link: ${imageResult.shareLink ?? (imageResult.id ? `https://www.binance.com/square/post/${imageResult.id}` : "unavailable")}`);
+    return;
   }
 
   if (!text) throw new Error("Could not build post text \u2014 check CoinGecko response.");

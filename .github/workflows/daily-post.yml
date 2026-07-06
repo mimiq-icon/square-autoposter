@@ -5,7 +5,13 @@ on:
     # 08:30 UTC every day = 10:30 Harare/CAT time (UTC+2).
     # Change the two numbers (minute hour) to shift the posting time.
     - cron: '30 8 * * *'
-  workflow_dispatch: {}   # adds a "Run workflow" button so you can test on demand
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (print what would be posted, do not post to Binance)'
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   post:
@@ -26,4 +32,8 @@ jobs:
           # Leave this secret unset and the script quietly uses the fixed
           # templates instead — nothing breaks either way.
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          # Dry run mode — when you tap "Run workflow" and check the dry_run
+          # box, the script prints what it WOULD post without calling the
+          # Binance API. Useful for testing format changes safely.
+          DRY_RUN: ${{ github.event.inputs.dry_run == 'true' }}
         run: node post.mjs

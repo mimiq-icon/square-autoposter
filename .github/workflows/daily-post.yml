@@ -27,13 +27,31 @@ jobs:
 
       - name: Post to Binance Square
         env:
+          # Required: your Binance Square posting API key
           BINANCE_SQUARE_OPENAPI_KEY: ${{ secrets.BINANCE_SQUARE_OPENAPI_KEY }}
-          # Optional: only needed if you set up the AI-written-text upgrade.
-          # Leave this secret unset and the script quietly uses the fixed
-          # templates instead — nothing breaks either way.
+
+          # v4: Multi-provider AI chain. Set any/all of these.
+          # The script tries them in order: Groq → OpenRouter → Gemini.
+          # If none are set, or all fail, it falls back to template mode.
+          #
+          # Groq (recommended primary — free, fast, Llama 3.3 70B):
+          #   Get a key at console.groq.com (no credit card needed)
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+
+          # OpenRouter (fallback — free models available via aggregator):
+          #   Get a key at openrouter.ai/keys (no credit card needed for free models)
+          #   Default model: meta-llama/llama-3.3-70b-instruct:free
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+
+          # Gemini (last resort — free, was flaky):
+          #   Get a key at aistudio.google.com/apikey
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          # Dry run mode — when you tap "Run workflow" and check the dry_run
-          # box, the script prints what it WOULD post without calling the
-          # Binance API. Useful for testing format changes safely.
+
+          # Optional model overrides (defaults shown):
+          # GROQ_MODEL: 'llama-3.3-70b-versatile'
+          # OPENROUTER_MODEL: 'meta-llama/llama-3.3-70b-instruct:free'
+          # GEMINI_MODEL: 'gemini-2.0-flash'
+
+          # Dry run mode — check the box above to test without posting
           DRY_RUN: ${{ github.event.inputs.dry_run == 'true' }}
         run: node post.mjs

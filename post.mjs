@@ -1,10 +1,19 @@
 // post.mjs
 // Fetches live crypto data (free CoinGecko API, no key needed) and posts to
-// Binance Square with $cashtags. Rotates across 4 content styles through the
-// week so it isn't the same post shape every day.
+// Binance Square with $cashtags.
 //
-// Requires: Node.js 18+ (uses built-in fetch). No npm install needed.
-// Requires env var: BINANCE_SQUARE_OPENAPI_KEY (set as a GitHub Actions secret)
+// Content generation has two modes:
+//   1. AI mode (optional): if GEMINI_API_KEY is set, a free-tier Gemini model
+//      writes the post text from the real price data.
+//   2. Template mode (default / fallback): fixed templates, no external AI call.
+// AI output is always validated before use (cashtag count, banned phrases).
+// If it fails validation, errors, or no key is set, we silently fall back to
+// templates — the bot never goes a day without posting just because the AI
+// step had a bad day.
+//
+// Requires: Node.js 18+ (built-in fetch). No npm install needed.
+// Required env var: BINANCE_SQUARE_OPENAPI_KEY
+// Optional env var: GEMINI_API_KEY (get one free, no card, at aistudio.google.com/apikey)
 
 const COINS = [
   { id: "bitcoin", symbol: "BTC" },
@@ -21,6 +30,26 @@ const MAX_CASHTAGS_PER_POST = 3;
 const SQUARE_ENDPOINT =
   "https://www.binance.com/bapi/composite/v1/public/pgc/openApi/content/add";
 
+// Free-tier-eligible model as of 2026. Override with GEMINI_MODEL if Google
+// changes free-tier eligibility later.
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+const GEMINI_ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+
+// Phrases that turn a factual update into an implicit trading suggestion.
+// This matters more here than in typical content: the "Write to Earn" model
+// pays a commission specifically when readers trade off a cashtag, so any
+// nudge toward buying/selling is a conflict of interest, not just a style
+// choice. Kept intentionally broad/blunt — better to over-reject into the
+// safe template fallback than let a nudge through.
+const BANNED_PHRASES = [
+  "buy the dip", "buying opportunity", "who's buying", "who is buying",
+  "good entry", "entry point", "target price", "price target",
+  "about to explode", "guaranteed", "guarantee", "sure thing",
+  "breakout incoming", "short squeeze", "load up", "your play",
+  "financial advice to buy", "should you buy", "should you sell",
+  "sell now", "buy now", "moon", "to the moon", "100x", "get in now",
+];
+
 async function getMarketData() {
   const ids = COINS.map((c) => c.id).join(",");
   const url = `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=${ids}&price_change_percentage=24h,7d`;
@@ -28,7 +57,6 @@ async function getMarketData() {
   if (!res.ok) throw new Error(`CoinGecko error: ${res.status}`);
   const rows = await res.json();
 
-  // Turn the array into a lookup keyed by CoinGecko id, matched to our symbols
   const byId = {};
   for (const row of rows) byId[row.id] = row;
 
@@ -54,8 +82,6 @@ function fmtPrice(n) {
   return `$${n.toLocaleString(undefined, { maximumFractionDigits: n < 10 ? 4 : 2 })}`;
 }
 
-// Rotate which subset of the watchlist gets featured, so the same coins
-// aren't always front and center and we always stay within the cashtag cap.
 function rotateSubset(list, size, offset) {
   const out = [];
   for (let i = 0; i < size && i < list.length; i++) {
@@ -64,7 +90,10 @@ function rotateSubset(list, size, offset) {
   return out;
 }
 
-// --- Template 1: market snapshot (rotating subset of coins) ---
+// ---------------------------------------------------------------------------
+// Template mode (default + fallback) — unchanged from the original script.
+// ---------------------------------------------------------------------------
+
 function buildSnapshotPost(data, dayIndex) {
   const featured = rotateSubset(data, MAX_CASHTAGS_PER_POST, dayIndex);
   const lines = featured.map(
@@ -78,7 +107,6 @@ function buildSnapshotPost(data, dayIndex) {
   ].join("\n");
 }
 
-// --- Template 2: today's biggest mover (always exactly 1 cashtag) ---
 function buildTopMoverPost(data) {
   let best = null;
   for (const d of data) {
@@ -94,7 +122,6 @@ function buildTopMoverPost(data) {
   ].join("\n");
 }
 
-// --- Template 3: short educational tip, tied to one rotating coin ---
 const EDU_TIPS = [
   "Market cap = price \u00d7 circulating supply. It values the coins already out there, not future issuance.",
   "Fully diluted valuation (FDV) assumes max possible supply exists today. A big gap between market cap and FDV usually means more tokens unlock over time.",
@@ -116,7 +143,6 @@ function buildEducationalPost(data, dayIndex) {
   ].join("\n");
 }
 
-// --- Template 4: weekly recap (only runs on Sundays) ---
 function buildWeeklyRecapPost(data, dayIndex) {
   const featured = rotateSubset(data, MAX_CASHTAGS_PER_POST, dayIndex);
   const lines = featured.map(
@@ -129,6 +155,104 @@ function buildWeeklyRecapPost(data, dayIndex) {
     "7-day view, not a forecast. Always DYOR.",
   ].join("\n");
 }
+
+// ---------------------------------------------------------------------------
+// AI mode (optional) — only runs if GEMINI_API_KEY is set.
+// ---------------------------------------------------------------------------
+
+function countCashtags(text) {
+  const matches = text.match(/\$[A-Z]{2,6}\b/g) || [];
+  return matches;
+}
+
+// Reject anything that isn't grounded in the actual watchlist, has too many
+// cashtags, or contains a banned phrase. This runs on every AI response
+// before it's allowed anywhere near the post endpoint.
+function isSafeAiText(text, allowedSymbols) {
+  if (!text || typeof text !== "string") return false;
+  const trimmed = text.trim();
+  if (trimmed.length < 10 || trimmed.length > 700) return false;
+
+  const tags = countCashtags(trimmed);
+  if (tags.length > MAX_CASHTAGS_PER_POST) return false;
+  for (const tag of tags) {
+    if (!allowedSymbols.includes(tag.slice(1))) return false;
+  }
+
+  const lower = trimmed.toLowerCase();
+  for (const phrase of BANNED_PHRASES) {
+    if (lower.includes(phrase)) return false;
+  }
+
+  return true;
+}
+
+async function callGemini(prompt) {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) return null;
+
+  const res = await fetch(`${GEMINI_ENDPOINT}?key=${key}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: { maxOutputTokens: 220, temperature: 0.8 },
+    }),
+  });
+
+  if (!res.ok) {
+    console.log(`Gemini API non-OK response: ${res.status}`);
+    return null;
+  }
+
+  const data = await res.json();
+  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+  return text || null;
+}
+
+// style is one of "snapshot" | "mover" | "educational" — used only to steer
+// the prompt, same as the dayIndex rotation already did for templates.
+async function buildAiPost(data, dayIndex, style) {
+  const featured = rotateSubset(data, MAX_CASHTAGS_PER_POST, dayIndex);
+  const priceLines = featured
+    .map((d) => `${d.symbol}: ${fmtPrice(d.price)}, 24h change ${fmtPct(d.change24h)}`)
+    .join("; ");
+  const allowedSymbols = featured.map((d) => d.symbol);
+
+  const styleInstruction = {
+    snapshot: "Write a short, neutral market-snapshot update covering these coins.",
+    mover: "Write a short update focused on whichever of these coins moved the most in the last 24h.",
+    educational: "Write a short update that gives one genuine, factual crypto/market-structure concept (e.g. market cap vs FDV, funding rates, volume), then mentions the current price of one of these coins as an aside.",
+  }[style];
+
+  const prompt = [
+    "You are writing a short social media post (2-4 sentences, no more than 700 characters) for a factual crypto market account.",
+    styleInstruction,
+    `Real, current data (use only this, do not invent numbers): ${priceLines}.`,
+    `Use $TICKER cashtags only for these symbols, and no more than ${MAX_CASHTAGS_PER_POST} total: ${allowedSymbols.map((s) => "$" + s).join(", ")}.`,
+    "Strict rules: no trading suggestions of any kind (no 'buy', 'sell', 'buying opportunity', 'entry point'); no price predictions or targets; no hype words like 'moon' or 'guaranteed'; no urgency language. Plain, factual, slightly conversational tone is fine. A genuine question to readers about what they're watching is fine, as long as it's not phrased as a trade prompt.",
+    "End the post with: Not financial advice. DYOR.",
+    "Output only the post text, nothing else — no preamble, no quotes, no markdown.",
+  ].join("\n");
+
+  try {
+    const raw = await callGemini(prompt);
+    if (!raw) return null;
+    const cleaned = raw.trim();
+    if (!isSafeAiText(cleaned, allowedSymbols)) {
+      console.log("AI output failed validation, falling back to template.");
+      return null;
+    }
+    return cleaned;
+  } catch (err) {
+    console.log(`Gemini call failed (${err.message}), falling back to template.`);
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Posting
+// ---------------------------------------------------------------------------
 
 async function postToSquare(text) {
   const key = process.env.BINANCE_SQUARE_OPENAPI_KEY;
@@ -156,22 +280,38 @@ async function postToSquare(text) {
 async function main() {
   const data = await getMarketData();
   const now = new Date();
-  const dayIndex = now.getDate(); // used to rotate subsets/tips deterministically
+  const dayIndex = now.getDate();
   const isSunday = now.getDay() === 0;
+  const aiEnabled = Boolean(process.env.GEMINI_API_KEY);
 
-  let text;
+  let text = null;
+  let source = "template";
+
   if (isSunday) {
+    // Weekly recap stays template-based: it's a fixed 7-day data readout,
+    // not a place where varied phrasing adds much.
     text = buildWeeklyRecapPost(data, dayIndex);
   } else {
-    // Rotate daily between snapshot / top mover / educational
-    const rotation = [buildSnapshotPost, buildTopMoverPost, buildEducationalPost];
-    const fn = rotation[dayIndex % rotation.length];
-    text = fn(data, dayIndex);
+    const rotation = ["snapshot", "mover", "educational"];
+    const style = rotation[dayIndex % rotation.length];
+
+    if (aiEnabled) {
+      text = await buildAiPost(data, dayIndex, style);
+      if (text) source = "ai";
+    }
+
+    if (!text) {
+      // Either AI is disabled, or it failed/was rejected — use the
+      // corresponding safe template instead.
+      const templateFn = { snapshot: buildSnapshotPost, mover: buildTopMoverPost, educational: buildEducationalPost }[style];
+      text = style === "mover" ? templateFn(data) : templateFn(data, dayIndex);
+      source = "template";
+    }
   }
 
   if (!text) throw new Error("Could not build post text \u2014 check CoinGecko response.");
 
-  console.log("--- Post preview ---");
+  console.log(`--- Post preview (source: ${source}) ---`);
   console.log(text);
   console.log("--------------------");
 

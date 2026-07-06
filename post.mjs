@@ -453,20 +453,59 @@ function countCashtags(text) {
 // Reject anything that isn't grounded in the actual data, has too many
 // cashtags, or contains a banned phrase. Runs on every AI response before
 // it's allowed anywhere near the post endpoint.
+//
+// v3.2 FIX: The previous check accepted any text >= 10 chars, which let
+// through fragments like "Here's a look at some trending crypto assets"
+// (44 chars, no cashtags, no DYOR line). The AI was producing incomplete
+// fragments and they were being posted. Now we require:
+//   - At least 120 chars (a real 2-sentence post is ~150-300 chars)
+//   - At least 1 cashtag (the prompt always asks for them)
+//   - The DYOR closing line (the prompt always asks for it)
+//   - No more than 600 chars (was 700 — tighter to match Binance display)
 function isSafeAiText(text, allowedSymbols) {
   if (!text || typeof text !== "string") return false;
   const trimmed = text.trim();
-  if (trimmed.length < 10 || trimmed.length > 700) return false;
 
-  const tags = countCashtags(trimmed);
-  if (tags.length > MAX_CASHTAGS_PER_POST) return false;
-  for (const tag of tags) {
-    if (!allowedSymbols.includes(tag.slice(1))) return false;
+  // Length checks — reject fragments
+  if (trimmed.length < 120) {
+    console.log(`AI output too short (${trimmed.length} chars, need >= 120), rejecting.`);
+    return false;
+  }
+  if (trimmed.length > 600) {
+    console.log(`AI output too long (${trimmed.length} chars, max 600), rejecting.`);
+    return false;
   }
 
+  // Must contain at least one cashtag (the prompt always asks for them)
+  const tags = countCashtags(trimmed);
+  if (tags.length === 0) {
+    console.log("AI output has no cashtags, rejecting.");
+    return false;
+  }
+  if (tags.length > MAX_CASHTAGS_PER_POST) {
+    console.log(`AI output has ${tags.length} cashtags (max ${MAX_CASHTAGS_PER_POST}), rejecting.`);
+    return false;
+  }
+  for (const tag of tags) {
+    if (!allowedSymbols.includes(tag.slice(1))) {
+      console.log(`AI output uses ungrounded cashtag ${tag}, rejecting.`);
+      return false;
+    }
+  }
+
+  // Must contain the DYOR closing line (the prompt always asks for it)
   const lower = trimmed.toLowerCase();
+  if (!lower.includes("dyor") && !lower.includes("not financial advice")) {
+    console.log("AI output missing DYOR/not-financial-advice line, rejecting.");
+    return false;
+  }
+
+  // Banned phrases
   for (const phrase of BANNED_PHRASES) {
-    if (lower.includes(phrase)) return false;
+    if (lower.includes(phrase)) {
+      console.log(`AI output contains banned phrase "${phrase}", rejecting.`);
+      return false;
+    }
   }
 
   return true;
@@ -476,12 +515,20 @@ async function callGemini(prompt) {
   const key = process.env.GEMINI_API_KEY;
   if (!key) return null;
 
+  // v3.2 FIX: Increased maxOutputTokens from 260 to 500 (was causing
+  // truncated output — 260 tokens is theoretically ~1000 chars but Gemini
+  // was stopping early). Lowered temperature from 0.8 to 0.4 for more
+  // consistent, less hedged output.
   const res = await fetch(`${GEMINI_ENDPOINT}?key=${key}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { maxOutputTokens: 260, temperature: 0.8 },
+      generationConfig: {
+        maxOutputTokens: 500,
+        temperature: 0.4,
+        topP: 0.9,
+      },
     }),
   });
 
@@ -491,7 +538,18 @@ async function callGemini(prompt) {
   }
 
   const data = await res.json();
-  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+  const candidate = data?.candidates?.[0];
+
+  // v3.2 FIX: Check finishReason. If Gemini stopped due to SAFETY,
+  // RECITATION, or OTHER, the output is likely truncated or incomplete.
+  // Log it and return null so the caller falls back to template mode.
+  const finishReason = candidate?.finishReason;
+  if (finishReason && finishReason !== "STOP") {
+    console.log(`Gemini finishReason: ${finishReason} (output likely incomplete, rejecting).`);
+    return null;
+  }
+
+  const text = candidate?.content?.parts?.[0]?.text;
   return text || null;
 }
 
@@ -562,13 +620,26 @@ async function buildAiPost(data, dayIndex, style, ctx = {}) {
   if (allowedSymbols.length === 0 || dataLines.length === 0) return null;
 
   const prompt = [
-    "You are writing a short social media post (2-4 sentences, no more than 700 characters) for a factual crypto market account.",
-    styleInstruction,
-    `Real, current data (use only this, do not invent numbers): ${dataLines.join("; ")}.`,
-    `Use $TICKER cashtags only for these symbols, and no more than ${MAX_CASHTAGS_PER_POST} total: ${allowedSymbols.map((s) => "$" + s).join(", ")}.`,
-    "Strict rules: no trading suggestions of any kind (no 'buy', 'sell', 'buying opportunity', 'entry point'); no price predictions or targets; no hype words like 'moon' or 'guaranteed'; no urgency language. Plain, factual, slightly conversational tone is fine. A genuine question to readers about what they're watching is fine, as long as it's not phrased as a trade prompt.",
-    "End the post with: Not financial advice. DYOR.",
-    "Output only the post text, nothing else \u2014 no preamble, no quotes, no markdown.",
+    "You are writing a short social media post for a factual crypto market account.",
+    `Style: ${styleInstruction}`,
+    "",
+    `Real, current data (use ONLY this data, do not invent numbers):`,
+    dataLines.join("\n"),
+    "",
+    `You MUST include $TICKER cashtags for at least 2 of these symbols (no more than ${MAX_CASHTAGS_PER_POST} total): ${allowedSymbols.map((s) => "$" + s).join(", ")}.`,
+    "",
+    "Rules:",
+    "- Write 3-4 complete sentences. Do NOT stop mid-sentence.",
+    "- No trading suggestions (no 'buy', 'sell', 'entry point', 'buying opportunity').",
+    "- No price predictions or targets.",
+    "- No hype words ('moon', 'guaranteed', '100x', 'breakout').",
+    "- Plain, factual, slightly conversational tone.",
+    "- End with exactly: Not financial advice. DYOR.",
+    "",
+    "Example of a good post (do NOT copy this, just match the format):",
+    "Trending on CoinGecko today: $SOL (Solana, rank #5), $BTC (Bitcoin, rank #1), and $HYPE (Hyperliquid, rank #10). Solana continues to see strong search interest alongside its recent price action. Bitcoin needs no introduction at the top of the rankings. Not financial advice. DYOR.",
+    "",
+    "Output ONLY the post text. No preamble, no quotes, no markdown, no explanation.",
   ].join("\n");
 
   try {

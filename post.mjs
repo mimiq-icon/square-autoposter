@@ -105,7 +105,15 @@ const IMAGE_POLL_INTERVAL_MS = 3000;
 const IMAGE_MAX_POLL_RETRIES = 10;
 
 // Free-tier-eligible Gemini model as of 2026.
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+// v3.3 FIX: Switched default model from gemini-2.5-flash to gemini-2.0-flash.
+// 2.5-flash is a "thinking" model — it burns tokens on internal reasoning
+// before generating output, and those thinking tokens count against
+// maxOutputTokens. The model would think for ~480 tokens, start writing,
+// hit the 500-token ceiling after 40 chars, and get cut off — producing
+// the fragments you saw ("Here's a look at some trending crypto assets").
+// 2.0-flash doesn't have thinking, so all tokens go to output.
+// Override with GEMINI_MODEL env var if you want a different model.
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash";
 const GEMINI_ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 
 // Free, no-key chart rendering service (quickchart.io).
@@ -515,33 +523,44 @@ async function callGemini(prompt) {
   const key = process.env.GEMINI_API_KEY;
   if (!key) return null;
 
-  // v3.2 FIX: Increased maxOutputTokens from 260 to 500 (was causing
-  // truncated output — 260 tokens is theoretically ~1000 chars but Gemini
-  // was stopping early). Lowered temperature from 0.8 to 0.4 for more
-  // consistent, less hedged output.
+  // v3.3 FIX: gemini-2.5-* models are "thinking" models that burn tokens
+  // on internal reasoning. If using a 2.5 model, disable thinking via
+  // thinkingConfig (thinkingBudget: 0) so all tokens go to output.
+  // For 2.0 and earlier models, thinkingConfig is ignored (they don't think).
+  const isThinkingModel = GEMINI_MODEL.includes("2.5");
+  const generationConfig = {
+    maxOutputTokens: 800,  // v3.3: bumped from 500 to 800 for safety margin
+    temperature: 0.4,
+    topP: 0.9,
+  };
+  if (isThinkingModel) {
+    generationConfig.thinkingConfig = { thinkingBudget: 0 };
+  }
+
   const res = await fetch(`${GEMINI_ENDPOINT}?key=${key}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: {
-        maxOutputTokens: 500,
-        temperature: 0.4,
-        topP: 0.9,
-      },
+      generationConfig,
     }),
   });
 
   if (!res.ok) {
     console.log(`Gemini API non-OK response: ${res.status}`);
+    // Log response body for non-OK to help diagnose model availability issues
+    try {
+      const errBody = await res.text();
+      console.log(`Gemini error body: ${errBody.substring(0, 300)}`);
+    } catch {}
     return null;
   }
 
   const data = await res.json();
   const candidate = data?.candidates?.[0];
 
-  // v3.2 FIX: Check finishReason. If Gemini stopped due to SAFETY,
-  // RECITATION, or OTHER, the output is likely truncated or incomplete.
+  // Check finishReason. If Gemini stopped due to SAFETY, RECITATION,
+  // MAX_TOKENS, or OTHER, the output is likely truncated or incomplete.
   // Log it and return null so the caller falls back to template mode.
   const finishReason = candidate?.finishReason;
   if (finishReason && finishReason !== "STOP") {

@@ -1,1 +1,25 @@
+name: Daily Binance Square Post
 
+on:
+  schedule:
+    # 08:30 UTC every day = 10:30 Harare/CAT time (UTC+2).
+    # Change the two numbers (minute hour) to shift the posting time.
+    - cron: '30 8 * * *'
+  workflow_dispatch: {}   # adds a "Run workflow" button so you can test on demand
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Post to Binance Square
+        env:
+          BINANCE_SQUARE_OPENAPI_KEY: ${{ secrets.BINANCE_SQUARE_OPENAPI_KEY }}
+        run: node post.mjs

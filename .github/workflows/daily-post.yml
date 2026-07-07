@@ -47,6 +47,13 @@ jobs:
           #   Get a key at aistudio.google.com/apikey
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
 
+          # v5.2: CoinGecko Demo API key (recommended — removes the single
+          # most fragile dependency in the pipeline).
+          #   Get a free key at coingecko.com/developers (no card required)
+          #   Without this, all CoinGecko calls hit a worldwide-shared
+          #   5-15 req/min bucket. With it, you get a dedicated 100 req/min.
+          COINGECKO_API_KEY: ${{ secrets.COINGECKO_API_KEY }}
+
           # Optional model overrides (defaults shown):
           # GROQ_MODEL: 'llama-3.3-70b-versatile'
           # OPENROUTER_MODEL: 'meta-llama/llama-3.3-70b-instruct:free'

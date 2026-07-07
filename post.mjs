@@ -337,7 +337,11 @@ function fmtPct(n) {
 }
 
 function fmtPrice(n) {
-  return `$${n.toLocaleString(undefined, { maximumFractionDigits: n < 10 ? 4 : 2 })}`;
+  // v5: minimumFractionDigits was missing, so toLocaleString silently
+  // dropped trailing zeros ($7.90 -> "$7.9") while other coins in the same
+  // post kept 2 decimals ($1,772.31), making prices look inconsistently
+  // formatted side by side. Always show at least 2 decimals now.
+  return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: n < 10 ? 4 : 2 })}`;
 }
 
 // NEW (v2): Format large USD amounts as $X.XXB or $X.XXT for readability.

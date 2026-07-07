@@ -1629,7 +1629,18 @@ async function main() {
   }
 
   const now = new Date();
-  const dayIndex = now.getDate();
+  // v5.3: DAY_INDEX_OVERRIDE lets you dry-run different days back-to-back
+  // to test whether the vibe/template rotation actually produces different
+  // output, or whether the model's prior dominates regardless of instruction.
+  // Usage: set DAY_INDEX_OVERRIDE=1 (or any integer) in the workflow env or
+  // GitHub Actions inputs. Defaults to today's date if unset — zero
+  // production risk, the override only exists for local/dry-run diagnostics.
+  const dayIndex = process.env.DAY_INDEX_OVERRIDE
+    ? parseInt(process.env.DAY_INDEX_OVERRIDE, 10)
+    : now.getDate();
+  if (process.env.DAY_INDEX_OVERRIDE) {
+    console.log(`  [DIAGNOSTIC] DAY_INDEX_OVERRIDE=${dayIndex} (would normally be day ${now.getDate()})`);
+  }
   const isSunday = now.getDay() === 0;
 
   // v4: AI is enabled if ANY provider key is set (Groq, OpenRouter, or Gemini)

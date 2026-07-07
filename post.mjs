@@ -706,6 +706,21 @@ function isSafeAiText(text, allowedSymbols) {
     }
   }
 
+  // v5: Regex catch for volume/market-cap SIZE comparisons ("$ETH has a
+  // smaller 24h volume than $BTC", "$BTC has a bigger market cap than
+  // $LINK"). Exact-substring filler matching misses these because of the
+  // variable words in between ("smaller 24h volume than", "smaller
+  // volume compared to"). These comparisons are almost always true
+  // regardless of the day's actual numbers (BTC outranks ETH outranks
+  // LINK in size basically every day), so they read as an "insight" but
+  // aren't really about today's data — same underlying problem as the
+  // filler phrases above, just structured as a comparison instead of a
+  // single adjective.
+  const SIZE_COMPARISON_RE = /\b(smaller|larger|bigger|higher|lower|more|less)\b[^.]{0,25}\b(volume|market cap)\b/i;
+  if (SIZE_COMPARISON_RE.test(trimmed)) {
+    return { ok: false, reason: "volume/market-cap size comparison (near-permanent ranking, not an observation about today) — compare 24h/7d percent changes instead", retryable: false };
+  }
+
   // Banned phrases (trading suggestions) — not retryable.
   for (const phrase of BANNED_PHRASES) {
     if (lower.includes(phrase)) {
@@ -925,7 +940,7 @@ async function buildAiPost(data, dayIndex, style, ctx = {}) {
   // them, they won't be counted as cashtags by validation.
   const styleConfig = {
     snapshot: {
-      directive: "List today's prices for these coins — one compact clause each with just price and 24h change, nothing more crammed in per coin. Then use the rest of the post (1 sentence) to point out ONE genuine comparison drawn from the 7-day change or volume numbers in DATA — e.g. a coin moving against its own weekly trend, or one whose volume looks unusually large or small next to the others' size. A vague line like 'X and Y are seeing significant/notable volume' is NOT a comparison — it just restates that big coins have big numbers. Say something that's actually true only because of today's specific data.",
+      directive: "List today's prices for these coins — one compact clause each with just price and 24h change, nothing more crammed in per coin. Then use the rest of the post (1 sentence) for ONE comparison built ONLY from the 24h/7d PERCENT changes in DATA — e.g. a coin's daily move going a different direction than its own weekly trend, or which coin moved most/least this week. Do NOT compare volume or market cap size between coins (e.g. '$X has smaller volume than $Y', '$X has a bigger market cap') — that ordering is almost always the same regardless of what today's data actually is, so it's not really an observation about today. Percent changes actually move day to day; build the comparison from those instead.",
       example: "$COIN1 $67,234 (+2.1% 24h) · $COIN2 $3,456 (-1.2% 24h) · $COIN3 $567 (+0.5% 24h). $COIN2 is down today despite being up 9% over the past week \u2014 the only one of the three moving against its own weekly trend. Not financial advice. DYOR.",
     },
     mover: {

@@ -738,36 +738,40 @@ async function buildAiPost(data, dayIndex, style, ctx = {}) {
   const { globalMarket, fng, anomalies, trending } = ctx;
 
   // v4.1: Each style now has its own directive + example post.
-  // The examples are deliberately concise (2-3 sentences) and show
-  // the model what "good" looks like — factual, no filler, no repetition.
+  // v4.2: Examples now use $COIN1/$COIN2/$COIN3 placeholders instead of real
+  // tickers. Previously, the model was copying example cashtags (BTC, ETH, BNB)
+  // alongside the actual data symbols, producing 6 cashtags when max is 3.
+  // These placeholders don't match the cashtag regex ($[A-Z]{2,6}\b — note
+  // the digit prevents a word boundary match), so even if the model copies
+  // them, they won't be counted as cashtags by validation.
   const styleConfig = {
     snapshot: {
       directive: "List today's prices for these coins. One line per coin, then one short observation about the overall direction. Don't describe what the numbers show — let the numbers show it.",
-      example: "$BTC $67,234 (+2.1%) · $ETH $3,456 (-1.2%) · $BNB $567 (+0.5%). Bitcoin leading the day while ETH and BNB drift sideways. Not financial advice. DYOR.",
+      example: "$COIN1 $67,234 (+2.1%) · $COIN2 $3,456 (-1.2%) · $COIN3 $567 (+0.5%). Bitcoin leading the day while ETH and BNB drift sideways. Not financial advice. DYOR.",
     },
     mover: {
       directive: "Lead with the coin that moved most. State the move and current price in one sentence. Add one line of neutral context (volume, recent range — whatever the data provides). Don't speculate on why it moved.",
-      example: "Today's biggest mover: $SOL at $123, up 5.4% in 24h on $4.5B volume. Largest single-day move in the watchlist this week. Not financial advice. DYOR.",
+      example: "Today's biggest mover: $COIN1 at $123, up 5.4% in 24h on $4.5B volume. Largest single-day move in the watchlist this week. Not financial advice. DYOR.",
     },
     educational: {
       directive: "Explain ONE crypto concept in plain language in 2 sentences. Then mention one coin's current price as a concrete example. Don't list multiple concepts — pick one and explain it well.",
-      example: "Market cap = price × circulating supply. It values coins already in circulation, not future token unlocks. For context, $BTC at $67,234 has a market cap around $1.3T. Not financial advice. DYOR.",
+      example: "Market cap = price × circulating supply. It values coins already in circulation, not future token unlocks. For context, $COIN1 at $67,234 has a market cap around $1.3T. Not financial advice. DYOR.",
     },
     macro: {
       directive: "Give the big picture in 2 sentences: total market cap + BTC dominance + (if available) sentiment. Mention one featured coin briefly. Don't list every number — pick the 2-3 that tell the story.",
-      example: "Total crypto market cap sits at $2.28T with BTC dominance at 55.8% — Bitcoin still firmly in control. Fear & Greed at 24/100 (extreme fear). $BTC at $67,234 holding above recent lows. Not financial advice. DYOR.",
+      example: "Total crypto market cap sits at $2.28T with BTC dominance at 55.8% — Bitcoin still firmly in control. Fear & Greed at 24/100 (extreme fear). $COIN1 at $67,234 holding above recent lows. Not financial advice. DYOR.",
     },
     anomaly: {
       directive: "State the unusual move(s) factually — coin, direction, magnitude, in one sentence per coin. Add one line noting this is notable without interpreting it as a trade setup. Maximum 3 coins.",
-      example: "Unusual 24h moves: $SOL +12.3% (vol $4.5B), $XRP -8.5% (vol $2.1B). Both moves stand out against an otherwise quiet watchlist. Not financial advice. DYOR.",
+      example: "Unusual 24h moves: $COIN1 +12.3% (vol $4.5B), $COIN2 -8.5% (vol $2.1B). Both moves stand out against an otherwise quiet watchlist. Not financial advice. DYOR.",
     },
     trending: {
       directive: "List what's trending on CoinGecko right now. One compact line, then one sentence of context (why these might be getting attention — but no speculation about price direction). Don't describe the rankings — the numbers already show them.",
-      example: "Trending on CoinGecko: $SOL (rank #5), $BTC (rank #1), $HYPE (rank #10). Search interest spiking across both established names and newer entrants. Not financial advice. DYOR.",
+      example: "Trending on CoinGecko: $COIN1 (rank #5), $COIN2 (rank #1), $COIN3 (rank #10). Search interest spiking across both established names and newer entrants. Not financial advice. DYOR.",
     },
     sentiment: {
       directive: "State the Fear & Greed reading and what it means. One sentence on what this extreme historically coincides with — without framing it as a buy/sell signal. Mention one coin's price as an anchor.",
-      example: "Fear & Greed Index at 24/100 — extreme fear territory. Historically this reading has coincided with capitulation and high volatility, not a directional signal by itself. $BTC at $67,234. Not financial advice. DYOR.",
+      example: "Fear & Greed Index at 24/100 — extreme fear territory. Historically this reading has coincided with capitulation and high volatility, not a directional signal by itself. $COIN1 at $67,234. Not financial advice. DYOR.",
     },
   };
 
@@ -819,11 +823,8 @@ async function buildAiPost(data, dayIndex, style, ctx = {}) {
   if (allowedSymbols.length === 0 || dataLines.length === 0) return null;
 
   // v4.1: Rewritten prompt — shorter, more directive, with per-style examples.
-  // Key changes from v4:
-  //   - 2-3 sentences (was 3-4) — less filler
-  //   - Explicit anti-patterns to avoid (repetition, corporate-speak, filler phrases)
-  //   - Per-style example that shows what "good" looks like for THIS style
-  //   - Persona: "knowledgeable friend texting a quick update"
+  // v4.2: Added explicit instruction not to copy example symbols, and
+  // examples now use $COIN1/$COIN2/$COIN3 placeholders (see styleConfig).
   const prompt = [
     "You write like a knowledgeable friend texting a quick market update — concise, direct, no filler.",
     "",
@@ -832,7 +833,7 @@ async function buildAiPost(data, dayIndex, style, ctx = {}) {
     "DATA (use only this, do not invent numbers):",
     dataLines.join("\n"),
     "",
-    `CASHTAGS: Use $TICKER for at least 2 of: ${allowedSymbols.map((s) => "$" + s).join(", ")}. Max ${MAX_CASHTAGS_PER_POST} total.`,
+    `CASHTAGS: Use $TICKER for at least 2 of: ${allowedSymbols.map((s) => "$" + s).join(", ")}. Max ${MAX_CASHTAGS_PER_POST} total. Use ONLY these symbols — no others.`,
     "",
     "STYLE RULES:",
     "- 2-3 sentences total. Short and dense beats long and repetitive.",
@@ -844,6 +845,8 @@ async function buildAiPost(data, dayIndex, style, ctx = {}) {
     "",
     `EXAMPLE (${style} style — match this density, don't copy the words):`,
     config.example,
+    "",
+    "The EXAMPLE shows format only. Its $COIN1/$COIN2/$COIN3 are placeholders — do NOT use them. Use ONLY the real symbols from DATA above.",
     "",
     "Output ONLY the post text. No preamble, no quotes, no markdown.",
   ].join("\n");
@@ -1325,9 +1328,12 @@ async function main() {
   const dayIndex = now.getDate();
   const isSunday = now.getDay() === 0;
 
-  // v4: AI is enabled if ANY provider key is set (Groq, OpenAI, or Gemini)
+  // v4: AI is enabled if ANY provider key is set (Groq, OpenRouter, or Gemini)
+  // v4.2 BUG FIX: was checking OPENAI_API_KEY (leftover from before the
+  // OpenRouter swap). If only OPENROUTER_API_KEY was set, aiEnabled evaluated
+  // false and AI was silently skipped — no error, just straight to template.
   const aiEnabled = Boolean(
-    process.env.GROQ_API_KEY || process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY
+    process.env.GROQ_API_KEY || process.env.OPENROUTER_API_KEY || process.env.GEMINI_API_KEY
   );
 
   // v4: Log available providers at startup so you can see which are configured

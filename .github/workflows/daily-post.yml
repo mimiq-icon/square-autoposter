@@ -23,7 +23,10 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          # 'lts/*' always resolves to whatever Node LTS GitHub's runners
+          # currently support, so this won't need touching again when the
+          # next version (e.g. 24 -> 26) is deprecated on the runner image.
+          node-version: 'lts/*'
 
       - name: Post to Binance Square
         env:

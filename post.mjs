@@ -1116,6 +1116,26 @@ async function buildAiPost(data, dayIndex, style, ctx = {}) {
   // v5: Kept the richer data fields, Binance Vision API, expanded watchlist,
   // minimumFractionDigits fix, size-comparison regex, and rewritten
   // snapshot/mover directives from the uploaded v5 file.
+  // v5.4: Context-aware CTA. The diagnostic showed "Which one are you watching?"
+  // appearing in 4/5 posts and being grammatically wrong for single-coin posts
+  // (Day 3's mover) and incoherent for educational posts (Day 4's "Which $DOGE
+  // move" tacked onto a market-cap definition). Now picks the CTA based on
+  // what actually fits the post shape.
+  let ctaInstruction;
+  if (style === "educational") {
+    // Educational posts end with the concept + example price. A CTA tacked on
+    // doesn't fit — Day 4 proved this. Drop it entirely.
+    ctaInstruction = "- CTA: Skip. Educational posts end after the concept and example. Do not tack a question on.";
+  } else if (allowedSymbols.length === 1) {
+    // Single-coin posts (mover) — "which one" is grammatically wrong when
+    // there's only one. Use a single-coin CTA instead.
+    const onlyCoin = allowedSymbols[0];
+    ctaInstruction = `- CTA (optional): End with a curiosity question about $${onlyCoin} specifically, e.g. "What's your read on $${onlyCoin} today?" — NOT "which one" (there's only one). NOT a trade question.`;
+  } else {
+    // Multi-coin posts — the standard curiosity CTA fits.
+    ctaInstruction = `- CTA (optional): End with a curiosity question like 'Which one are you watching?' — NOT a trade question like 'are you buying?'.`;
+  }
+
   const prompt = [
     "You write like a knowledgeable friend texting a quick market update — concise, direct, no filler.",
     "",
@@ -1133,7 +1153,7 @@ async function buildAiPost(data, dayIndex, style, ctx = {}) {
     "STRUCTURE (follow this):",
     "- HOOK: One sentence that grabs attention — a surprising number, a contrast, or a direct question.",
     "- BODY: 1-2 sentences with the key facts from DATA. Dense, no filler.",
-    "- CTA (optional): End with a curiosity question like 'Which one are you watching?' — NOT a trade question like 'are you buying?'.",
+    ctaInstruction,
     `- DISCLAIMER: End with exactly this line: ${disclaimer}`,
     "",
     "STYLE RULES:",

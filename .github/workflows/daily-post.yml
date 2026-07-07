@@ -12,6 +12,11 @@ on:
         required: false
         type: boolean
         default: false
+      day_index_override:
+        description: 'Diagnostic: override dayIndex (1-31) to test vibe/template rotation. Leave empty for today.'
+        required: false
+        type: string
+        default: ''
 
 jobs:
   post:
@@ -64,4 +69,10 @@ jobs:
 
           # Dry run mode — check the box above to test without posting
           DRY_RUN: ${{ github.event.inputs.dry_run == 'true' }}
+
+          # v5.3: Diagnostic dayIndex override — lets you dry-run different
+          # vibes/templates back-to-back to test if rotation produces visibly
+          # different output or if the model's prior dominates. Leave empty
+          # in production (defaults to today's date).
+          DAY_INDEX_OVERRIDE: ${{ github.event.inputs.day_index_override }}
         run: node post.mjs

@@ -563,36 +563,45 @@ function isSafeAiText(text, allowedSymbols) {
   }
   const trimmed = text.trim();
 
-  // Length checks — reject fragments
-  if (trimmed.length < 120) {
-    return { ok: false, reason: `too short (${trimmed.length} chars, need >= 120)`, retryable: false };
+  // v4.5: Lowered minimum from 120 to 100 chars. The 120 threshold was
+  // killing complete posts for being 1 char under an arbitrary line (the
+  // corrective retry produced 119 chars and got rejected). 100 still
+  // catches the 44-char fragments from v3 but doesn't reject a real post
+  // for off-by-one length.
+  if (trimmed.length < 100) {
+    return { ok: false, reason: `too short (${trimmed.length} chars, need >= 100)`, retryable: false };
   }
   if (trimmed.length > 600) {
     return { ok: false, reason: `too long (${trimmed.length} chars, max 600)`, retryable: false };
   }
 
-  // Cashtag checks — these ARE retryable. The model can usually fix
-  // "you used 5 cashtags, max is 3, use only $X $Y $Z" on a second try.
+  // v4.5: Cashtag checks now count UNIQUE symbols, not total matches.
+  // Binance's error 220095 is about "coin pair count" (unique coins),
+  // not total $-mentions. A post that says "$BNB at $576, $BNB still
+  // leading" has 2 cashtag matches but only 1 unique coin — that's fine
+  // for Binance. Previously this was over-counted as 2 cashtags.
   const tags = countCashtags(trimmed);
-  if (tags.length === 0) {
+  const uniqueSymbols = [...new Set(tags.map(t => t.slice(1)))];
+
+  if (uniqueSymbols.length === 0) {
     return {
       ok: false,
       reason: `no cashtags — must use at least 1 of: ${allowedSymbols.map(s => "$" + s).join(", ")}`,
       retryable: true,
     };
   }
-  if (tags.length > MAX_CASHTAGS_PER_POST) {
+  if (uniqueSymbols.length > MAX_CASHTAGS_PER_POST) {
     return {
       ok: false,
-      reason: `used ${tags.length} cashtags (${tags.join(", ")}), max is ${MAX_CASHTAGS_PER_POST}. Use ONLY these: ${allowedSymbols.map(s => "$" + s).join(", ")}`,
+      reason: `used ${uniqueSymbols.length} unique coins (${[...new Set(tags)].join(", ")}), max is ${MAX_CASHTAGS_PER_POST}. Use ONLY these: ${allowedSymbols.map(s => "$" + s).join(", ")}`,
       retryable: true,
     };
   }
-  const ungroundedTags = tags.filter(t => !allowedSymbols.includes(t.slice(1)));
-  if (ungroundedTags.length > 0) {
+  const ungroundedSymbols = uniqueSymbols.filter(s => !allowedSymbols.includes(s));
+  if (ungroundedSymbols.length > 0) {
     return {
       ok: false,
-      reason: `used cashtag(s) not in today's data: ${ungroundedTags.join(", ")}. Use ONLY these: ${allowedSymbols.map(s => "$" + s).join(", ")}`,
+      reason: `used cashtag(s) not in today's data: ${ungroundedSymbols.map(s => "$" + s).join(", ")}. Use ONLY these: ${allowedSymbols.map(s => "$" + s).join(", ")}`,
       retryable: true,
     };
   }

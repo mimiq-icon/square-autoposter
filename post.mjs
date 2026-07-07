@@ -542,65 +542,80 @@ function findUngroundedCoinName(text, allowedSymbols) {
   return null;
 }
 
-// Reject anything that isn't grounded in the actual data, has too many
-// cashtags, or contains a banned phrase. Runs on every AI response before
-// it's allowed anywhere near the post endpoint.
+// v4.4: Refactored to return a result object instead of a bare boolean.
+// This lets the caller (callAiWithFallback) distinguish between failures
+// that a corrective retry can fix (cashtag overcount, ungrounded name)
+// and failures that a retry won't help (banned phrase, filler, length,
+// missing DYOR). Retryable failures get one corrective retry per provider
+// with a sharper nudge showing the model exactly what it did wrong.
 //
-// v4.1: Added filler-phrase detection. The model was producing output like
-// "These coins are making appearances in the market cap rankings" —
-// technically valid but obviously filler. Now we reject posts that contain
-// known filler phrases, which forces the AI to either write something
-// substantive or fall back to template mode.
+// Returns:
+//   { ok: true }                                          — post is safe to publish
+//   { ok: false, reason: "...", retryable: true/false }   — post rejected
+//
+// retryable = true means: a corrective retry (showing the model the reason)
+// might fix it. retryable = false means: the failure is structural (banned
+// phrase, filler habit, length) and a retry with the same provider is
+// unlikely to help — move to the next provider.
 function isSafeAiText(text, allowedSymbols) {
-  if (!text || typeof text !== "string") return false;
+  if (!text || typeof text !== "string") {
+    return { ok: false, reason: "empty or non-string output", retryable: false };
+  }
   const trimmed = text.trim();
 
   // Length checks — reject fragments
   if (trimmed.length < 120) {
-    console.log(`AI output too short (${trimmed.length} chars, need >= 120), rejecting.`);
-    return false;
+    return { ok: false, reason: `too short (${trimmed.length} chars, need >= 120)`, retryable: false };
   }
   if (trimmed.length > 600) {
-    console.log(`AI output too long (${trimmed.length} chars, max 600), rejecting.`);
-    return false;
+    return { ok: false, reason: `too long (${trimmed.length} chars, max 600)`, retryable: false };
   }
 
-  // Must contain at least one cashtag (the prompt always asks for them)
+  // Cashtag checks — these ARE retryable. The model can usually fix
+  // "you used 5 cashtags, max is 3, use only $X $Y $Z" on a second try.
   const tags = countCashtags(trimmed);
   if (tags.length === 0) {
-    console.log("AI output has no cashtags, rejecting.");
-    return false;
+    return {
+      ok: false,
+      reason: `no cashtags — must use at least 1 of: ${allowedSymbols.map(s => "$" + s).join(", ")}`,
+      retryable: true,
+    };
   }
   if (tags.length > MAX_CASHTAGS_PER_POST) {
-    console.log(`AI output has ${tags.length} cashtags (max ${MAX_CASHTAGS_PER_POST}), rejecting.`);
-    return false;
+    return {
+      ok: false,
+      reason: `used ${tags.length} cashtags (${tags.join(", ")}), max is ${MAX_CASHTAGS_PER_POST}. Use ONLY these: ${allowedSymbols.map(s => "$" + s).join(", ")}`,
+      retryable: true,
+    };
   }
-  for (const tag of tags) {
-    if (!allowedSymbols.includes(tag.slice(1))) {
-      console.log(`AI output uses ungrounded cashtag ${tag}, rejecting.`);
-      return false;
-    }
+  const ungroundedTags = tags.filter(t => !allowedSymbols.includes(t.slice(1)));
+  if (ungroundedTags.length > 0) {
+    return {
+      ok: false,
+      reason: `used cashtag(s) not in today's data: ${ungroundedTags.join(", ")}. Use ONLY these: ${allowedSymbols.map(s => "$" + s).join(", ")}`,
+      retryable: true,
+    };
   }
 
-  // v4.3: Same grounding check, but for bare coin names with no $ prefix —
-  // catches the model naming a coin from its own training knowledge (e.g.
-  // "Bitcoin held steady") when that coin isn't in today's actual data.
+  // Ungrounded coin names (bare words, no $) — also retryable.
   const ungrounded = findUngroundedCoinName(trimmed, allowedSymbols);
   if (ungrounded) {
-    console.log(`AI output names "${ungrounded.name}" (${ungrounded.symbol}) which isn't in today's data, rejecting.`);
-    return false;
+    return {
+      ok: false,
+      reason: `named "${ungrounded.name}" (${ungrounded.symbol}) which isn't in today's data. Only mention: ${allowedSymbols.join(", ")}`,
+      retryable: true,
+    };
   }
 
-  // Must contain the DYOR closing line (the prompt always asks for it)
+  // Must contain the DYOR closing line — not retryable, this is a hard
+  // structural requirement the model should always meet.
   const lower = trimmed.toLowerCase();
   if (!lower.includes("dyor") && !lower.includes("not financial advice")) {
-    console.log("AI output missing DYOR/not-financial-advice line, rejecting.");
-    return false;
+    return { ok: false, reason: "missing DYOR/not-financial-advice line", retryable: false };
   }
 
-  // v4.1 NEW: Filler phrase detection. These are phrases the model uses
-  // when it's padding for length rather than saying something. If present,
-  // reject and fall back to template — templates don't have this problem.
+  // Filler phrase detection — not retryable. If the model defaults to
+  // filler, a retry usually produces different filler.
   const FILLER_PHRASES = [
     "making appearances",
     "continues to see",
@@ -624,20 +639,37 @@ function isSafeAiText(text, allowedSymbols) {
   ];
   for (const phrase of FILLER_PHRASES) {
     if (lower.includes(phrase)) {
-      console.log(`AI output contains filler phrase "${phrase}", rejecting.`);
-      return false;
+      return { ok: false, reason: `filler phrase "${phrase}"`, retryable: false };
     }
   }
 
-  // Banned phrases (trading suggestions)
+  // Banned phrases (trading suggestions) — not retryable.
   for (const phrase of BANNED_PHRASES) {
     if (lower.includes(phrase)) {
-      console.log(`AI output contains banned phrase "${phrase}", rejecting.`);
-      return false;
+      return { ok: false, reason: `banned phrase "${phrase}"`, retryable: false };
     }
   }
 
-  return true;
+  return { ok: true };
+}
+
+// v4.4 NEW: Builds a corrective retry prompt that shows the model exactly
+// what it did wrong on the first attempt, then asks it to fix it.
+// Only called when isSafeAiText returned retryable: true.
+function buildCorrectivePrompt(originalPrompt, failedOutput, reason) {
+  return [
+    "Your previous attempt was rejected. Here's what went wrong:",
+    "",
+    `FAILED OUTPUT:`,
+    failedOutput,
+    "",
+    `REASON FOR REJECTION: ${reason}`,
+    "",
+    "Write the post again, fixing the issue above. Keep everything else the same — same data, same style, same 2-3 sentence density.",
+    "",
+    "ORIGINAL INSTRUCTIONS (for reference):",
+    originalPrompt,
+  ].join("\n");
 }
 
 // v4: Updated to accept key and model params so it matches the provider
@@ -726,9 +758,18 @@ async function callOpenAICompatible(prompt, key, model, baseUrl) {
   return choice.message?.content || null;
 }
 
-// v4 NEW: Try each AI provider in order. Returns { text, provider } on
+// v4.4: Try each AI provider in order. Returns { text, provider } on
 // success, or null if all providers fail or return invalid output.
-// Validation (isSafeAiText) runs on each provider's output before accepting.
+//
+// NEW in v4.4: One corrective retry per provider when validation fails
+// on something retryable (cashtag overcount, ungrounded name). The retry
+// shows the model exactly what it did wrong, which is more effective than
+// rewording the prompt after every failure.
+//
+// Retry only happens when isSafeAiText returns retryable: true. Network
+// errors, rate limits (429), and non-retryable validation failures (banned
+// phrases, filler, length, missing DYOR) skip the retry and move directly
+// to the next provider.
 async function callAiWithFallback(prompt, allowedSymbols) {
   for (const provider of AI_PROVIDERS) {
     const key = process.env[provider.envKey];
@@ -739,25 +780,62 @@ async function callAiWithFallback(prompt, allowedSymbols) {
 
     console.log(`  Trying ${provider.name} (${provider.model})...`);
 
+    // --- First attempt ---
+    let raw;
     try {
-      const raw = await provider.callFn(prompt, key, provider.model);
-      if (!raw) {
-        console.log(`  ${provider.name}: no output returned.`);
-        continue;
-      }
-      console.log(`  ${provider.name}: got ${raw.length} chars.`);
-
-      const cleaned = raw.trim();
-      if (!isSafeAiText(cleaned, allowedSymbols)) {
-        console.log(`  ${provider.name}: output failed validation.`);
-        continue;
-      }
-
-      console.log(`  ${provider.name}: SUCCESS (validated).`);
-      return { text: cleaned, provider: provider.name };
+      raw = await provider.callFn(prompt, key, provider.model);
     } catch (err) {
       console.log(`  ${provider.name}: ${err.message}`);
+      continue;  // network/rate-limit error — no retry, next provider
+    }
+
+    if (!raw) {
+      console.log(`  ${provider.name}: no output returned.`);
       continue;
+    }
+    console.log(`  ${provider.name}: got ${raw.length} chars.`);
+
+    const cleaned = raw.trim();
+    let validation = isSafeAiText(cleaned, allowedSymbols);
+
+    if (validation.ok) {
+      console.log(`  ${provider.name}: SUCCESS (validated).`);
+      return { text: cleaned, provider: provider.name };
+    }
+
+    console.log(`  ${provider.name}: validation failed — ${validation.reason}`);
+
+    // --- Corrective retry (one shot, only if retryable) ---
+    if (validation.retryable) {
+      console.log(`  ${provider.name}: retrying with corrective prompt...`);
+      const correctivePrompt = buildCorrectivePrompt(prompt, cleaned, validation.reason);
+
+      let retryRaw;
+      try {
+        retryRaw = await provider.callFn(correctivePrompt, key, provider.model);
+      } catch (err) {
+        console.log(`  ${provider.name}: retry failed — ${err.message}`);
+        continue;  // retry errored — next provider
+      }
+
+      if (!retryRaw) {
+        console.log(`  ${provider.name}: retry returned no output.`);
+        continue;
+      }
+      console.log(`  ${provider.name}: retry got ${retryRaw.length} chars.`);
+
+      const retryCleaned = retryRaw.trim();
+      const retryValidation = isSafeAiText(retryCleaned, allowedSymbols);
+
+      if (retryValidation.ok) {
+        console.log(`  ${provider.name}: SUCCESS on retry (validated).`);
+        return { text: retryCleaned, provider: provider.name };
+      }
+
+      console.log(`  ${provider.name}: retry also failed — ${retryValidation.reason}`);
+      // Fall through to next provider
+    } else {
+      console.log(`  ${provider.name}: failure not retryable, moving to next provider.`);
     }
   }
 

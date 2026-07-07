@@ -517,14 +517,11 @@ function countCashtags(text) {
 // cashtags, or contains a banned phrase. Runs on every AI response before
 // it's allowed anywhere near the post endpoint.
 //
-// v3.2 FIX: The previous check accepted any text >= 10 chars, which let
-// through fragments like "Here's a look at some trending crypto assets"
-// (44 chars, no cashtags, no DYOR line). The AI was producing incomplete
-// fragments and they were being posted. Now we require:
-//   - At least 120 chars (a real 2-sentence post is ~150-300 chars)
-//   - At least 1 cashtag (the prompt always asks for them)
-//   - The DYOR closing line (the prompt always asks for it)
-//   - No more than 600 chars (was 700 — tighter to match Binance display)
+// v4.1: Added filler-phrase detection. The model was producing output like
+// "These coins are making appearances in the market cap rankings" —
+// technically valid but obviously filler. Now we reject posts that contain
+// known filler phrases, which forces the AI to either write something
+// substantive or fall back to template mode.
 function isSafeAiText(text, allowedSymbols) {
   if (!text || typeof text !== "string") return false;
   const trimmed = text.trim();
@@ -563,7 +560,38 @@ function isSafeAiText(text, allowedSymbols) {
     return false;
   }
 
-  // Banned phrases
+  // v4.1 NEW: Filler phrase detection. These are phrases the model uses
+  // when it's padding for length rather than saying something. If present,
+  // reject and fall back to template — templates don't have this problem.
+  const FILLER_PHRASES = [
+    "making appearances",
+    "continues to see",
+    "needs no introduction",
+    "it's worth noting",
+    "it is worth noting",
+    "worth mentioning",
+    "maintaining its position",
+    "holding steady at rank",
+    "with their respective",
+    "making waves",
+    "gaining traction",
+    "catching attention",
+    "drawing attention",
+    "turning heads",
+    "in the spotlight",
+    "under the spotlight",
+    "stands out as",
+    "remains a key",
+    "remains a focal",
+  ];
+  for (const phrase of FILLER_PHRASES) {
+    if (lower.includes(phrase)) {
+      console.log(`AI output contains filler phrase "${phrase}", rejecting.`);
+      return false;
+    }
+  }
+
+  // Banned phrases (trading suggestions)
   for (const phrase of BANNED_PHRASES) {
     if (lower.includes(phrase)) {
       console.log(`AI output contains banned phrase "${phrase}", rejecting.`);
@@ -709,17 +737,42 @@ async function callAiWithFallback(prompt, allowedSymbols) {
 async function buildAiPost(data, dayIndex, style, ctx = {}) {
   const { globalMarket, fng, anomalies, trending } = ctx;
 
-  const styleInstruction = {
-    snapshot: "Write a short, neutral market-snapshot update covering these coins.",
-    mover: "Write a short update focused on whichever of these coins moved the most in the last 24h.",
-    educational: "Write a short update that gives one genuine, factual crypto/market-structure concept (e.g. market cap vs FDV, funding rates, volume), then mentions the current price of one of these coins as an aside.",
-    macro: "Write a short macro market overview using the provided total market cap, BTC dominance, and (if available) sentiment. Mention 1-2 of the featured coins briefly.",
-    anomaly: "Write a short post noting 1-3 of the provided unusual 24h moves. State each move factually (direction and magnitude) without interpreting it as a trade setup.",
-    trending: "Write a short post about the provided trending coins. State their names and market cap ranks factually without hyping them.",
-    sentiment: "Write a short post noting the current Fear & Greed reading is at an extreme. Mention what 'extreme fear' or 'extreme greed' tends to coincide with historically, without framing it as a buy or sell signal. Mention one featured coin's current price as an aside.",
-  }[style];
+  // v4.1: Each style now has its own directive + example post.
+  // The examples are deliberately concise (2-3 sentences) and show
+  // the model what "good" looks like — factual, no filler, no repetition.
+  const styleConfig = {
+    snapshot: {
+      directive: "List today's prices for these coins. One line per coin, then one short observation about the overall direction. Don't describe what the numbers show — let the numbers show it.",
+      example: "$BTC $67,234 (+2.1%) · $ETH $3,456 (-1.2%) · $BNB $567 (+0.5%). Bitcoin leading the day while ETH and BNB drift sideways. Not financial advice. DYOR.",
+    },
+    mover: {
+      directive: "Lead with the coin that moved most. State the move and current price in one sentence. Add one line of neutral context (volume, recent range — whatever the data provides). Don't speculate on why it moved.",
+      example: "Today's biggest mover: $SOL at $123, up 5.4% in 24h on $4.5B volume. Largest single-day move in the watchlist this week. Not financial advice. DYOR.",
+    },
+    educational: {
+      directive: "Explain ONE crypto concept in plain language in 2 sentences. Then mention one coin's current price as a concrete example. Don't list multiple concepts — pick one and explain it well.",
+      example: "Market cap = price × circulating supply. It values coins already in circulation, not future token unlocks. For context, $BTC at $67,234 has a market cap around $1.3T. Not financial advice. DYOR.",
+    },
+    macro: {
+      directive: "Give the big picture in 2 sentences: total market cap + BTC dominance + (if available) sentiment. Mention one featured coin briefly. Don't list every number — pick the 2-3 that tell the story.",
+      example: "Total crypto market cap sits at $2.28T with BTC dominance at 55.8% — Bitcoin still firmly in control. Fear & Greed at 24/100 (extreme fear). $BTC at $67,234 holding above recent lows. Not financial advice. DYOR.",
+    },
+    anomaly: {
+      directive: "State the unusual move(s) factually — coin, direction, magnitude, in one sentence per coin. Add one line noting this is notable without interpreting it as a trade setup. Maximum 3 coins.",
+      example: "Unusual 24h moves: $SOL +12.3% (vol $4.5B), $XRP -8.5% (vol $2.1B). Both moves stand out against an otherwise quiet watchlist. Not financial advice. DYOR.",
+    },
+    trending: {
+      directive: "List what's trending on CoinGecko right now. One compact line, then one sentence of context (why these might be getting attention — but no speculation about price direction). Don't describe the rankings — the numbers already show them.",
+      example: "Trending on CoinGecko: $SOL (rank #5), $BTC (rank #1), $HYPE (rank #10). Search interest spiking across both established names and newer entrants. Not financial advice. DYOR.",
+    },
+    sentiment: {
+      directive: "State the Fear & Greed reading and what it means. One sentence on what this extreme historically coincides with — without framing it as a buy/sell signal. Mention one coin's price as an anchor.",
+      example: "Fear & Greed Index at 24/100 — extreme fear territory. Historically this reading has coincided with capitulation and high volatility, not a directional signal by itself. $BTC at $67,234. Not financial advice. DYOR.",
+    },
+  };
 
-  if (!styleInstruction) return null;
+  const config = styleConfig[style];
+  if (!config) return null;
 
   const allowedSymbols = [];
   const dataLines = [];
@@ -765,27 +818,34 @@ async function buildAiPost(data, dayIndex, style, ctx = {}) {
 
   if (allowedSymbols.length === 0 || dataLines.length === 0) return null;
 
+  // v4.1: Rewritten prompt — shorter, more directive, with per-style examples.
+  // Key changes from v4:
+  //   - 2-3 sentences (was 3-4) — less filler
+  //   - Explicit anti-patterns to avoid (repetition, corporate-speak, filler phrases)
+  //   - Per-style example that shows what "good" looks like for THIS style
+  //   - Persona: "knowledgeable friend texting a quick update"
   const prompt = [
-    "You are writing a short social media post for a factual crypto market account.",
-    `Style: ${styleInstruction}`,
+    "You write like a knowledgeable friend texting a quick market update — concise, direct, no filler.",
     "",
-    `Real, current data (use ONLY this data, do not invent numbers):`,
+    `TASK: ${config.directive}`,
+    "",
+    "DATA (use only this, do not invent numbers):",
     dataLines.join("\n"),
     "",
-    `You MUST include $TICKER cashtags for at least 2 of these symbols (no more than ${MAX_CASHTAGS_PER_POST} total): ${allowedSymbols.map((s) => "$" + s).join(", ")}.`,
+    `CASHTAGS: Use $TICKER for at least 2 of: ${allowedSymbols.map((s) => "$" + s).join(", ")}. Max ${MAX_CASHTAGS_PER_POST} total.`,
     "",
-    "Rules:",
-    "- Write 3-4 complete sentences. Do NOT stop mid-sentence.",
-    "- No trading suggestions (no 'buy', 'sell', 'entry point', 'buying opportunity').",
-    "- No price predictions or targets.",
-    "- No hype words ('moon', 'guaranteed', '100x', 'breakout').",
-    "- Plain, factual, slightly conversational tone.",
+    "STYLE RULES:",
+    "- 2-3 sentences total. Short and dense beats long and repetitive.",
+    "- Do NOT repeat information. If you said the rank, don't say 'ranking well'.",
+    "- Do NOT use filler phrases: 'making appearances', 'continues to see', 'needs no introduction', 'it's worth noting'.",
+    "- Do NOT describe what the numbers already show. Don't say 'maintaining its position' — the rank shows that.",
+    "- No trading suggestions, predictions, or hype words.",
     "- End with exactly: Not financial advice. DYOR.",
     "",
-    "Example of a good post (do NOT copy this, just match the format):",
-    "Trending on CoinGecko today: $SOL (Solana, rank #5), $BTC (Bitcoin, rank #1), and $HYPE (Hyperliquid, rank #10). Solana continues to see strong search interest alongside its recent price action. Bitcoin needs no introduction at the top of the rankings. Not financial advice. DYOR.",
+    `EXAMPLE (${style} style — match this density, don't copy the words):`,
+    config.example,
     "",
-    "Output ONLY the post text. No preamble, no quotes, no markdown, no explanation.",
+    "Output ONLY the post text. No preamble, no quotes, no markdown.",
   ].join("\n");
 
   // v4: Use multi-provider fallback chain instead of single Gemini call.

@@ -179,10 +179,25 @@ const QUICKCHART_ENDPOINT = "https://quickchart.io/chart";
 
 // ---------------------------------------------------------------------------
 // NEW (v2): Free data source endpoints (all no-key, all $0).
+// v5.2: CoinGecko now supports an optional Demo API key. Without a key, all
+// requests hit a worldwide-shared 5-15 req/min bucket — the single most
+// fragile dependency in the pipeline. A free Demo key (no card, 10 min
+// signup at coingecko.com/developers) moves you to a dedicated 100 req/min
+// bucket. Pass it via the COINGECKO_API_KEY env var; if unset, falls back
+// to the keyless path with no behavior change.
 // ---------------------------------------------------------------------------
+const COINGECKO_API_KEY = process.env.COINGECKO_API_KEY || null;
 const COINGECKO_MARKETS_URL = "https://api.coingecko.com/api/v3/coins/markets";
 const COINGECKO_TRENDING_URL = "https://api.coingecko.com/api/v3/search/trending";
 const COINGECKO_GLOBAL_URL = "https://api.coingecko.com/api/v3/global";
+
+// Helper: build CoinGecko request headers if a Demo key is set.
+function coingeckoHeaders() {
+  if (!COINGECKO_API_KEY) return {};
+  // Demo plan uses the x-cg-demo-api-key header (not the Pro x-cg-pro-api-key).
+  return { "x-cg-demo-api-key": COINGECKO_API_KEY };
+}
+
 const FEAR_GREED_URL = "https://api.alternative.me/fng/?limit=1";
 // v5: "Binance ticker error: 451" isn't a bug in this script — it's Binance
 // returning HTTP 451 ("restricted location") to api.binance.com because
@@ -231,7 +246,8 @@ async function getMarketData({ sparkline = false } = {}) {
   const ids = COINS.map((c) => c.id).join(",");
   const sparklineParam = sparkline ? "&sparkline=true" : "";
   const url = `${COINGECKO_MARKETS_URL}?vs_currency=usd&ids=${ids}&price_change_percentage=24h,7d${sparklineParam}`;
-  const res = await fetch(url);
+  // v5.2: pass Demo API key in headers if set — moves off shared rate-limit bucket
+  const res = await fetch(url, { headers: coingeckoHeaders() });
   if (!res.ok) throw new Error(`CoinGecko markets error: ${res.status}`);
   const rows = await res.json();
 
@@ -267,7 +283,7 @@ async function getMarketData({ sparkline = false } = {}) {
 // to real, tradeable, well-known assets (not obscure micro-caps that might
 // not even be on Binance).
 async function getTrendingCoins() {
-  const res = await fetch(COINGECKO_TRENDING_URL);
+  const res = await fetch(COINGECKO_TRENDING_URL, { headers: coingeckoHeaders() });
   if (!res.ok) throw new Error(`CoinGecko trending error: ${res.status}`);
   const data = await res.json();
   return (data.coins || [])
@@ -284,7 +300,7 @@ async function getTrendingCoins() {
 // NEW (v2): Global market data from CoinGecko. Total market cap, 24h volume,
 // BTC/ETH dominance, and 24h market cap change.
 async function getGlobalMarket() {
-  const res = await fetch(COINGECKO_GLOBAL_URL);
+  const res = await fetch(COINGECKO_GLOBAL_URL, { headers: coingeckoHeaders() });
   if (!res.ok) throw new Error(`CoinGecko global error: ${res.status}`);
   const data = await res.json();
   return {
@@ -1664,7 +1680,7 @@ async function main() {
 
   // Always fetch core market data first — most templates need it.
   const data = await getMarketData();
-  console.log(`  CoinGecko markets: ${data.length} coins fetched.`);
+  console.log(`  CoinGecko markets: ${data.length} coins fetched. (key: ${COINGECKO_API_KEY ? "Demo plan, 100/min bucket" : "none, shared 5-15/min bucket"})`);
 
   // Gather supplementary data. Each fetch is independent and fails gracefully
   // — if one source is down, the others still work and the script picks the

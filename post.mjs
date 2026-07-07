@@ -513,6 +513,35 @@ function countCashtags(text) {
   return matches;
 }
 
+// v4.3: Full names for the core watchlist, used to catch the model naming a
+// coin in plain prose (e.g. "Bitcoin," "Ethereum") that isn't actually in
+// today's DATA/allowedSymbols. This is a different failure mode than extra
+// cashtags: no "$" prefix, so countCashtags() never sees it, but it's still
+// an ungrounded claim about a coin the post has no real data for. Caught this
+// class of bug via the example prompts ("...ETH and BNB drift sideways")
+// priming the model to reuse those names even when today's featured coins
+// were different — same root cause as the cashtag-copying issue, just
+// showing up as a bare word instead of a $cashtag.
+const COIN_NAMES_BY_SYMBOL = {
+  BTC: ["bitcoin"],
+  ETH: ["ethereum"],
+  BNB: ["bnb", "binance coin", "binancecoin"],
+  SOL: ["solana"],
+  XRP: ["ripple", "xrp"],
+};
+
+function findUngroundedCoinName(text, allowedSymbols) {
+  const lower = text.toLowerCase();
+  for (const [symbol, names] of Object.entries(COIN_NAMES_BY_SYMBOL)) {
+    if (allowedSymbols.includes(symbol)) continue; // grounded — fine to mention
+    for (const name of names) {
+      const re = new RegExp(`\\b${name}\\b`, "i");
+      if (re.test(lower)) return { symbol, name };
+    }
+  }
+  return null;
+}
+
 // Reject anything that isn't grounded in the actual data, has too many
 // cashtags, or contains a banned phrase. Runs on every AI response before
 // it's allowed anywhere near the post endpoint.
@@ -551,6 +580,15 @@ function isSafeAiText(text, allowedSymbols) {
       console.log(`AI output uses ungrounded cashtag ${tag}, rejecting.`);
       return false;
     }
+  }
+
+  // v4.3: Same grounding check, but for bare coin names with no $ prefix —
+  // catches the model naming a coin from its own training knowledge (e.g.
+  // "Bitcoin held steady") when that coin isn't in today's actual data.
+  const ungrounded = findUngroundedCoinName(trimmed, allowedSymbols);
+  if (ungrounded) {
+    console.log(`AI output names "${ungrounded.name}" (${ungrounded.symbol}) which isn't in today's data, rejecting.`);
+    return false;
   }
 
   // Must contain the DYOR closing line (the prompt always asks for it)
@@ -747,7 +785,7 @@ async function buildAiPost(data, dayIndex, style, ctx = {}) {
   const styleConfig = {
     snapshot: {
       directive: "List today's prices for these coins. One line per coin, then one short observation about the overall direction. Don't describe what the numbers show — let the numbers show it.",
-      example: "$COIN1 $67,234 (+2.1%) · $COIN2 $3,456 (-1.2%) · $COIN3 $567 (+0.5%). Bitcoin leading the day while ETH and BNB drift sideways. Not financial advice. DYOR.",
+      example: "$COIN1 $67,234 (+2.1%) · $COIN2 $3,456 (-1.2%) · $COIN3 $567 (+0.5%). $COIN1 leading the day while the others drift sideways. Not financial advice. DYOR.",
     },
     mover: {
       directive: "Lead with the coin that moved most. State the move and current price in one sentence. Add one line of neutral context (volume, recent range — whatever the data provides). Don't speculate on why it moved.",
@@ -759,7 +797,7 @@ async function buildAiPost(data, dayIndex, style, ctx = {}) {
     },
     macro: {
       directive: "Give the big picture in 2 sentences: total market cap + BTC dominance + (if available) sentiment. Mention one featured coin briefly. Don't list every number — pick the 2-3 that tell the story.",
-      example: "Total crypto market cap sits at $2.28T with BTC dominance at 55.8% — Bitcoin still firmly in control. Fear & Greed at 24/100 (extreme fear). $COIN1 at $67,234 holding above recent lows. Not financial advice. DYOR.",
+      example: "Total crypto market cap sits at $2.28T with dominance concentrated in the top asset. Fear & Greed at 24/100 (extreme fear). $COIN1 at $67,234 holding above recent lows. Not financial advice. DYOR.",
     },
     anomaly: {
       directive: "State the unusual move(s) factually — coin, direction, magnitude, in one sentence per coin. Add one line noting this is notable without interpreting it as a trade setup. Maximum 3 coins.",
@@ -847,6 +885,7 @@ async function buildAiPost(data, dayIndex, style, ctx = {}) {
     config.example,
     "",
     "The EXAMPLE shows format only. Its $COIN1/$COIN2/$COIN3 are placeholders — do NOT use them. Use ONLY the real symbols from DATA above.",
+    "Do not name any coin, by symbol or full name (e.g. Bitcoin, Ethereum), that isn't in DATA above — even if it's true in general, if it's not in today's data it doesn't belong in this post.",
     "",
     "Output ONLY the post text. No preamble, no quotes, no markdown.",
   ].join("\n");

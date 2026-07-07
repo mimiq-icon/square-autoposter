@@ -52,6 +52,9 @@ const COINS = [
   { id: "binancecoin", symbol: "BNB" },
   { id: "solana", symbol: "SOL" },
   { id: "ripple", symbol: "XRP" },
+  { id: "cardano", symbol: "ADA" },
+  { id: "dogecoin", symbol: "DOGE" },
+  { id: "chainlink", symbol: "LINK" },
 ];
 
 // Binance rejected a post with 5 cashtags (error 220095: "Coin pair count
@@ -224,6 +227,17 @@ async function getMarketData({ sparkline = false } = {}) {
       change24h: d.price_change_percentage_24h_in_currency,
       change7d: d.price_change_percentage_7d_in_currency,
       sparkline7d: d.sparkline_in_7d?.price || null,
+      // v5: CoinGecko already returns these fields on every /coins/markets
+      // call — they were being fetched and thrown away. Capturing them
+      // gives the writer stage (template or AI) real extra data points to
+      // work with (volume, market cap, rank, 24h range) instead of just
+      // price + one percentage.
+      volume24h: d.total_volume,
+      marketCap: d.market_cap,
+      rank: d.market_cap_rank,
+      high24h: d.high_24h,
+      low24h: d.low_24h,
+      athChangePct: d.ath_change_percentage,
     };
   }).filter(Boolean);
 }
@@ -341,8 +355,11 @@ function rotateSubset(list, size, offset) {
 
 function buildSnapshotPost(data, dayIndex) {
   const featured = rotateSubset(data, MAX_CASHTAGS_PER_POST, dayIndex);
+  // v5: Added 7d change + 24h volume alongside price/24h change — the
+  // template was down to 2 numbers per coin, thinner than what's now
+  // available from getMarketData().
   const lines = featured.map(
-    (d) => `$${d.symbol}: ${fmtPrice(d.price)} (${fmtPct(d.change24h)} 24h)`
+    (d) => `$${d.symbol}: ${fmtPrice(d.price)} (${fmtPct(d.change24h)} 24h, ${fmtPct(d.change7d)} 7d) \u2014 vol ${fmtMcap(d.volume24h)}`
   );
   return [
     "\uD83D\uDCCA Crypto Market Snapshot",
@@ -359,9 +376,15 @@ function buildTopMoverPost(data) {
   }
   if (!best) return null;
   const direction = best.change24h >= 0 ? "up" : "down";
+  // v5: Added 24h range (high/low) and volume — gives a concrete sense of
+  // how big the move was relative to the day's range, not just a percent.
+  const rangeLine = (best.low24h && best.high24h)
+    ? `24h range: ${fmtPrice(best.low24h)} \u2013 ${fmtPrice(best.high24h)}. Volume: ${fmtMcap(best.volume24h)}.`
+    : `Volume: ${fmtMcap(best.volume24h)}.`;
   return [
     `\uD83D\uDC40 Today's biggest mover: $${best.symbol}`,
     `Price: ${fmtPrice(best.price)} \u2014 ${direction} ${Math.abs(best.change24h).toFixed(2)}% in 24h.`,
+    rangeLine,
     "",
     "Market data only, not a trade signal. Always DYOR.",
   ].join("\n");
@@ -528,6 +551,9 @@ const COIN_NAMES_BY_SYMBOL = {
   BNB: ["bnb", "binance coin", "binancecoin"],
   SOL: ["solana"],
   XRP: ["ripple", "xrp"],
+  ADA: ["cardano"],
+  DOGE: ["dogecoin"],
+  LINK: ["chainlink"],
 };
 
 function findUngroundedCoinName(text, allowedSymbols) {
@@ -871,12 +897,12 @@ async function buildAiPost(data, dayIndex, style, ctx = {}) {
   // them, they won't be counted as cashtags by validation.
   const styleConfig = {
     snapshot: {
-      directive: "List today's prices for these coins. One line per coin, then one short observation about the overall direction. Don't describe what the numbers show — let the numbers show it.",
-      example: "$COIN1 $67,234 (+2.1%) · $COIN2 $3,456 (-1.2%) · $COIN3 $567 (+0.5%). $COIN1 leading the day while the others drift sideways. Not financial advice. DYOR.",
+      directive: "List today's prices for these coins, weaving in at least one extra data point per coin beyond price and 24h change (7-day change or 24h volume — whatever the data provides). Then one short observation about the overall direction. Don't describe what the numbers show — let the numbers show it.",
+      example: "$COIN1 $67,234 (+2.1% 24h, +8.4% 7d) on $28B volume · $COIN2 $3,456 (-1.2% 24h) · $COIN3 $567 (+0.5% 24h, -3.1% 7d). $COIN1 leading both the day and the week while the others drift. Not financial advice. DYOR.",
     },
     mover: {
-      directive: "Lead with the coin that moved most. State the move and current price in one sentence. Add one line of neutral context (volume, recent range — whatever the data provides). Don't speculate on why it moved.",
-      example: "Today's biggest mover: $COIN1 at $123, up 5.4% in 24h on $4.5B volume. Largest single-day move in the watchlist this week. Not financial advice. DYOR.",
+      directive: "Lead with the coin that moved most. State the move and current price in one sentence. Add one line of neutral context using at least two of: volume, 24h high/low range, 7-day change — whatever the data provides. Don't speculate on why it moved.",
+      example: "Today's biggest mover: $COIN1 at $123, up 5.4% in 24h on $4.5B volume. Traded between $118 and $126 today, and is up 11% over the past week. Not financial advice. DYOR.",
     },
     educational: {
       directive: "Explain ONE crypto concept in plain language in 2 sentences. Then mention one coin's current price as a concrete example. Don't list multiple concepts — pick one and explain it well.",
@@ -936,12 +962,24 @@ async function buildAiPost(data, dayIndex, style, ctx = {}) {
       dataLines.push(`${d.symbol}: ${fmtPrice(d.price)}, 24h change ${fmtPct(d.change24h)}`);
     }
     dataLines.push(`Fear & Greed Index: ${fng.value}/100 (${fng.classification})`);
+  } else if (style === "mover") {
+    // v5: mover needs the single biggest mover, with volume + range + 7d
+    // context so the AI has more than one number to work with.
+    let best = null;
+    for (const d of data) {
+      if (!best || Math.abs(d.change24h) > Math.abs(best.change24h)) best = d;
+    }
+    if (best) {
+      allowedSymbols.push(best.symbol);
+      dataLines.push(`${best.symbol}: ${fmtPrice(best.price)}, 24h change ${fmtPct(best.change24h)}, 7d change ${fmtPct(best.change7d)}, 24h volume ${fmtMcap(best.volume24h)}, 24h range ${fmtPrice(best.low24h)}\u2013${fmtPrice(best.high24h)}`);
+    }
   } else {
-    // Default: snapshot-style with the core watchlist
+    // Default: snapshot-style with the core watchlist. v5: added 7d change
+    // and 24h volume so each coin carries more than 2 raw numbers.
     const featured = rotateSubset(data, MAX_CASHTAGS_PER_POST, dayIndex);
     for (const d of featured) {
       allowedSymbols.push(d.symbol);
-      dataLines.push(`${d.symbol}: ${fmtPrice(d.price)}, 24h change ${fmtPct(d.change24h)}`);
+      dataLines.push(`${d.symbol}: ${fmtPrice(d.price)}, 24h change ${fmtPct(d.change24h)}, 7d change ${fmtPct(d.change7d)}, 24h volume ${fmtMcap(d.volume24h)}`);
     }
   }
 
@@ -958,7 +996,9 @@ async function buildAiPost(data, dayIndex, style, ctx = {}) {
     "DATA (use only this, do not invent numbers):",
     dataLines.join("\n"),
     "",
-    `CASHTAGS: Use $TICKER for at least 2 of: ${allowedSymbols.map((s) => "$" + s).join(", ")}. Max ${MAX_CASHTAGS_PER_POST} total. Use ONLY these symbols — no others.`,
+    allowedSymbols.length === 1
+      ? `CASHTAGS: Use $TICKER for ${allowedSymbols.map((s) => "$" + s).join(", ")} at least once. Use ONLY this symbol — no others.`
+      : `CASHTAGS: Use $TICKER for at least 2 of: ${allowedSymbols.map((s) => "$" + s).join(", ")}. Max ${MAX_CASHTAGS_PER_POST} total. Use ONLY these symbols — no others.`,
     "",
     "STYLE RULES:",
     "- 2-3 sentences total. Short and dense beats long and repetitive.",

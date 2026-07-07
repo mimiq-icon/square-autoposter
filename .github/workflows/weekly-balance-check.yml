@@ -1,42 +1,101 @@
-name: Weekly Write-to-Earn Balance Check
+name: Weekly Write to Earn Balance Check
+
+# v7: This exists because "log the balance in a spreadsheet every week" is
+# exactly the kind of manual step that quietly stops happening after a
+# month, and a $0-cost project gives you no natural forcing function to
+# notice. Binance's posting API key can't read your account balance (it's
+# publish-only, by design — see binance/binance-skills-hub), so this can't
+# check the number for you. What it CAN do is make the reminder impossible
+# to forget: instead of a log line in an Actions run nobody re-opens, it
+# files a GitHub Issue every Thursday (Binance's USDC payout day). The
+# escalation language is driven by how many of these you've left open, not
+# by a timer — if you check in and close each one, it stays quiet forever.
+# If you stop looking, it starts telling you so, using the exact 2-week
+# check-in / 4-week stop-loss thresholds from the original analysis.
 
 on:
   schedule:
-    # Every Thursday at 09:00 UTC = 11:00 Harare time (UTC+2)
-    # Binance pays out Write to Earn commissions every Thursday, so this
-    # fires the morning of payout day to remind you to check your balance
-    # against the 0.1 USDC weekly floor.
-    - cron: '0 9 * * 4'
+    - cron: '0 9 * * 4'   # 09:00 UTC every Thursday = 11:00 Harare (CAT)
   workflow_dispatch: {}
 
+permissions:
+  issues: write
+
 jobs:
-  remind:
+  reminder:
     runs-on: ubuntu-latest
     steps:
-      - name: Weekly balance check reminder
-        run: |
-          echo "=========================================="
-          echo "  WEEKLY WRITE-TO-EARN BALANCE CHECK"
-          echo "=========================================="
-          echo ""
-          echo "Today is Thursday — Binance pays out Write to Earn"
-          echo "commissions today. Take 30 seconds to:"
-          echo ""
-          echo "  1. Open Binance → Square → Creator Center → Write to Earn"
-          echo "  2. Note this week's payout in USDC"
-          echo "  3. Log it in your spreadsheet with today's date"
-          echo ""
-          echo "STOP-LOSS RULE:"
-          echo "  If balance is below 0.1 USDC for 4 consecutive weeks,"
-          echo "  that's not noise — it's the reward structure telling you"
-          echo "  automation-only content isn't clearing the bar."
-          echo "  At that point: double down on the human-edited Sunday"
-          echo "  article, OR shut the automation off and reclaim the time."
-          echo ""
-          echo "=========================================="
-          echo ""
-          echo "This reminder runs automatically every Thursday."
-          echo "If you want to disable it, edit .github/workflows/weekly-balance-check.yml"
-          echo "and either delete the file or comment out the schedule: block."
-          echo ""
-          echo "=========================================="
+      - name: Open (and, if needed, escalate) this week's balance-check issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = 'write-to-earn-check';
+
+            // Make sure the label exists. Fails harmlessly if it already
+            // does — that's expected on every run after the first.
+            try {
+              await github.rest.issues.createLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                name: label,
+                color: 'fbca04',
+                description: 'Weekly Write to Earn balance-check reminder',
+              });
+            } catch (e) {
+              core.info(`Label "${label}" already exists — continuing.`);
+            }
+
+            // Count how many previous reminders are still open. Closing one
+            // each week (after you've actually logged that week's balance)
+            // keeps this at 0-1. Ignoring them makes it climb on its own —
+            // the escalation is driven by your behavior, not a fixed date.
+            const openIssues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: label,
+              per_page: 100,
+            });
+            const openCount = openIssues.data.length;
+            const weekCount = openCount + 1; // including the one we're about to file
+
+            let escalation = '';
+            if (weekCount >= 4) {
+              escalation = [
+                '',
+                '### 🛑 Stop-loss checkpoint',
+                '',
+                `This is unresolved reminder #${weekCount} in a row. Per the original stop-loss rule: if the weekly `,
+                'balance has sat below the 0.1 USDC floor for 4 straight weeks with no account-health warning',
+                'explaining why, that\'s the signal the reward structure has moved against this account — not a',
+                'reason to keep running the same way and hope. Either invest more into the human-edited weekly',
+                'article, or turn the automation off and reclaim the time. No ego about which one you pick.',
+              ].join('\n');
+            } else if (weekCount >= 2) {
+              escalation = [
+                '',
+                '### ⚠️ Check-in checkpoint',
+                '',
+                `This is unresolved reminder #${weekCount} in a row — worth 5 minutes now, before it becomes`,
+                'a stop-loss decision at week 4.',
+              ].join('\n');
+            }
+
+            const today = new Date().toISOString().slice(0, 10);
+            const { data: issue } = await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Write to Earn balance check — week of ${today}`,
+              labels: [label],
+              body: [
+                'Binance pays Write to Earn commissions in USDC every Thursday, for the Monday-Sunday cycle',
+                'that just ended.',
+                '',
+                '- [ ] Open Binance Square → Creator Center → Write to Earn and check this week\'s balance',
+                '- [ ] Note whether it cleared the 0.1 USDC weekly floor (below it, the balance resets)',
+                '- [ ] Close this issue once you\'ve looked — that\'s what keeps next week\'s reminder calm',
+                escalation,
+              ].join('\n'),
+            });
+
+            core.info(`Filed #${issue.number}. Open reminders in this streak: ${weekCount}.`);

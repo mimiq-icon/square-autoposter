@@ -615,6 +615,88 @@ function findUngroundedCoinName(text, allowedSymbols) {
   return null;
 }
 
+// v5.6: Vibe adherence check. The diagnostic showed the model silently
+// dropping the vibe instruction (told Range Watcher, wrote a 7d comparison
+// with zero range content). Nothing validated whether the vibe was actually
+// followed — cashtags, disclaimer, and length all get checked, but the vibe
+// was a "hope it sticks" instruction buried under 15 other constraints.
+//
+// This function checks whether the output actually reflects the active vibe.
+// Returns true if followed, or { reason: "..." } if not. Called from
+// isSafeAiText when a vibeName is provided (optional — tests skip it).
+//
+// Checks are deliberately keyword-based (not semantic) — fast, deterministic,
+// no extra API call. They look for evidence the model addressed the vibe's
+// core ask, not perfect compliance.
+function checkVibeAdherence(text, vibeName) {
+  if (!vibeName) return true; // no vibe to check — always passes
+  const lower = text.toLowerCase();
+
+  switch (vibeName) {
+    case "Plain Update":
+      // No specific requirement — "state the facts directly" always passes.
+      return true;
+
+    case "Comparison": {
+      // Must contain a contrast indicator — either a contrast word, or
+      // two coins moving in opposite directions (one "up" + one "down").
+      const contrastWords = [
+        "while", "but", "unlike", "vs", "versus", "compared",
+        "outpacing", "outpaced", "trails", "leads", "ahead", "behind",
+        "diverge", "diverging", "opposite", "contrast", "whereas",
+        "meanwhile", "split", "mixed",
+      ];
+      const hasContrastWord = contrastWords.some((w) => lower.includes(w));
+      const hasBothDirections = lower.includes("up") && lower.includes("down");
+      if (!hasContrastWord && !hasBothDirections) {
+        return { reason: "Comparison vibe requires a contrast (e.g. 'while', 'but', 'unlike', or one coin up + one down). Add an actual contrast between two data points." };
+      }
+      return true;
+    }
+
+    case "Range Watcher": {
+      // Must mention range-related terms — the data includes "24h range $X–$Y"
+      // so the model should reference the high/low or where price sits in range.
+      // v5.6 fix: "high" and "low" as bare substrings false-positive on
+      // "higher" and "lower" (which are about price direction, not range).
+      // Use specific phrases instead: "24h high", "high of", "high end", etc.
+      const rangeTerms = [
+        "range", "between", "band", "trading between",
+        "near the", "toward the", "24h high", "24h low",
+        "session high", "session low", "intraday",
+        "high of", "low of", "high end", "low end",
+      ];
+      const hasRangeTerm = rangeTerms.some((w) => lower.includes(w));
+      if (!hasRangeTerm) {
+        return { reason: "Range Watcher vibe requires mentioning the 24h range, high, low, or where the price sits within its range. The DATA includes '24h range $X–$Y' — reference it." };
+      }
+      return true;
+    }
+
+    case "Volume Lens": {
+      // Must mention volume — the data includes "24h volume $X.XB".
+      const hasVolume = lower.includes("volume") || lower.includes("vol ");
+      if (!hasVolume) {
+        return { reason: "Volume Lens vibe requires mentioning trading volume. The DATA includes '24h volume $X.XB' — reference it." };
+      }
+      return true;
+    }
+
+    case "Contrarian Question": {
+      // Must end with a question mark — the vibe instruction says "end with
+      // a curiosity question." If there's no question, the vibe wasn't followed.
+      // (Banned-phrase check already catches trade questions like "are you buying".)
+      if (!text.trim().endsWith("?")) {
+        return { reason: "Contrarian Question vibe requires ending with a curiosity question (must end with '?')." };
+      }
+      return true;
+    }
+
+    default:
+      return true; // unknown vibe — don't block
+  }
+}
+
 // v4.4: Refactored to return a result object instead of a bare boolean.
 // This lets the caller (callAiWithFallback) distinguish between failures
 // that a corrective retry can fix (cashtag overcount, ungrounded name)
@@ -630,7 +712,12 @@ function findUngroundedCoinName(text, allowedSymbols) {
 // might fix it. retryable = false means: the failure is structural (banned
 // phrase, filler habit, length) and a retry with the same provider is
 // unlikely to help — move to the next provider.
-function isSafeAiText(text, allowedSymbols) {
+//
+// v5.6: Added optional vibeName parameter. When provided, checks vibe
+// adherence (did the model actually follow the vibe instruction?). Vibe
+// failures are retryable — the corrective retry tells the model exactly
+// what vibe requirement it missed.
+function isSafeAiText(text, allowedSymbols, vibeName) {
   if (!text || typeof text !== "string") {
     return { ok: false, reason: "empty or non-string output", retryable: false };
   }
@@ -756,6 +843,18 @@ function isSafeAiText(text, allowedSymbols) {
     }
   }
 
+  // v5.6: Vibe adherence check. If a vibeName was provided, verify the
+  // output actually follows the vibe instruction. This is the check that
+  // was missing — the model could silently drop the vibe and nothing would
+  // catch it. Vibe failures are retryable (the corrective retry tells the
+  // model exactly what vibe requirement it missed).
+  if (vibeName) {
+    const vibeResult = checkVibeAdherence(trimmed, vibeName);
+    if (vibeResult !== true) {
+      return { ok: false, reason: `vibe "${vibeName}" not followed: ${vibeResult.reason}`, retryable: true };
+    }
+  }
+
   return { ok: true };
 }
 
@@ -872,11 +971,14 @@ async function callOpenAICompatible(prompt, key, model, baseUrl) {
 // shows the model exactly what it did wrong, which is more effective than
 // rewording the prompt after every failure.
 //
+// v5.6: Added vibeName parameter, passed through to isSafeAiText for
+// vibe adherence checking.
+//
 // Retry only happens when isSafeAiText returns retryable: true. Network
 // errors, rate limits (429), and non-retryable validation failures (banned
 // phrases, filler, length, missing DYOR) skip the retry and move directly
 // to the next provider.
-async function callAiWithFallback(prompt, allowedSymbols) {
+async function callAiWithFallback(prompt, allowedSymbols, vibeName) {
   for (const provider of AI_PROVIDERS) {
     const key = process.env[provider.envKey];
     if (!key) {
@@ -902,7 +1004,7 @@ async function callAiWithFallback(prompt, allowedSymbols) {
     console.log(`  ${provider.name}: got ${raw.length} chars.`);
 
     const cleaned = raw.trim();
-    let validation = isSafeAiText(cleaned, allowedSymbols);
+    let validation = isSafeAiText(cleaned, allowedSymbols, vibeName);
 
     if (validation.ok) {
       console.log(`  ${provider.name}: SUCCESS (validated).`);
@@ -931,7 +1033,7 @@ async function callAiWithFallback(prompt, allowedSymbols) {
       console.log(`  ${provider.name}: retry got ${retryRaw.length} chars.`);
 
       const retryCleaned = retryRaw.trim();
-      const retryValidation = isSafeAiText(retryCleaned, allowedSymbols);
+      const retryValidation = isSafeAiText(retryCleaned, allowedSymbols, vibeName);
 
       if (retryValidation.ok) {
         console.log(`  ${provider.name}: SUCCESS on retry (validated).`);
@@ -1168,8 +1270,6 @@ async function buildAiPost(data, dayIndex, style, ctx = {}) {
     "",
     `TASK: ${config.directive}`,
     "",
-    `TODAY'S VIBE: "${vibe.name}" — ${vibe.instruction}`,
-    "",
     "DATA (use only this, do not invent numbers):",
     dataLines.join("\n"),
     "",
@@ -1199,13 +1299,27 @@ async function buildAiPost(data, dayIndex, style, ctx = {}) {
     "The EXAMPLE shows format only. Its $COIN1/$COIN2/$COIN3 are placeholders — do NOT use them. Use ONLY the real symbols from DATA above.",
     "Do not name any coin, by symbol or full name (e.g. Bitcoin, Ethereum), that isn't in DATA above — even if it's true in general, if it's not in today's data it doesn't belong in this post.",
     "",
+    // v5.6: Vibe instruction moved to the END of the prompt (recency bias).
+    // Previously it was at position 2, buried under DATA/CASHTAGS/STRUCTURE/
+    // STYLE RULES/EXAMPLE — by the time the model generated, the vibe was
+    // far away and got silently dropped (the diagnostic showed Range Watcher
+    // producing output with zero range content). Now it's the last thing
+    // the model reads before generating, which is the highest-leverage
+    // position for instruction-following.
+    "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+    "BEFORE YOU WRITE — today's vibe is the ANGLE of your post. Follow it:",
+    `VIBE: "${vibe.name}" — ${vibe.instruction}`,
+    "Your output MUST reflect this vibe. If it doesn't, it will be rejected.",
+    "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+    "",
     "Output ONLY the post text. No preamble, no quotes, no markdown.",
   ].join("\n");
 
   // v4: Use multi-provider fallback chain instead of single Gemini call.
   // callAiWithFallback tries Groq → OpenAI → Gemini, returns { text, provider }
   // or null if all fail. Validation runs inside the chain on each provider's output.
-  const result = await callAiWithFallback(prompt, allowedSymbols);
+  // v5.6: Pass vibe.name so isSafeAiText can check vibe adherence.
+  const result = await callAiWithFallback(prompt, allowedSymbols, vibe.name);
   if (result) {
     return result.text;  // main() will use this as the post text
   }

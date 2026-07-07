@@ -991,11 +991,18 @@ async function buildAiPost(data, dayIndex, style, ctx = {}) {
     },
     {
       name: "Comparison",
-      instruction: "Find the most interesting contrast in the data (two coins moving differently, or one coin's 24h vs 7d). Lead with the contrast.",
+      // v5.5: Added fallback — Comparison needs price-change data to actually
+      // compare. When paired with data-poor templates (trending only has
+      // rank, no prices), fall back to comparing ranks or search-interest
+      // positioning instead of forcing a price comparison that doesn't exist.
+      instruction: "Find the most interesting contrast in the data. If price changes are available, contrast two coins' moves. If only ranks are available (trending data), contrast the rank positioning or search-interest context instead. Lead with whatever contrast the data actually supports.",
     },
     {
       name: "Range Watcher",
-      instruction: "Focus on where prices are within their recent range. Note if anything is near a 24h extreme. Don't predict breakouts — just observe where things sit.",
+      // v5.5: Added fallback — Range Watcher needs 24h high/low to observe
+      // where prices sit. If range data isn't available, fall back to noting
+      // the 24h change magnitude or ATH distance instead.
+      instruction: "Focus on where prices are within their recent range. If 24h high/low is in the data, note where current price sits in that range. If range data isn't available, fall back to noting the 24h change magnitude or distance from all-time high. Don't predict breakouts — just observe where things sit.",
     },
     {
       name: "Volume Lens",
@@ -1006,6 +1013,13 @@ async function buildAiPost(data, dayIndex, style, ctx = {}) {
       instruction: "End with a curiosity question that asks what readers are watching, without suggesting they should buy or sell. E.g. 'Which one are you keeping an eye on?'",
     },
   ];
+  // v5.5: Vibe index uses dayIndex % 5. Template rotation (in main()) now
+  // uses a 7-entry array, so the two are coprime — 5×7=35 unique (vibe,
+  // template) pairings occur over 35 days instead of 5 over 5. Previously
+  // both used % 5, which locked them in a fixed 1:1 correspondence (every
+  // macro post was always Plain Update, every trending always Comparison,
+  // etc.) — the vibe system added zero cross-variety despite the comment
+  // claiming independence.
   const vibe = VIBES[dayIndex % VIBES.length];
   const disclaimer = DISCLAIMER_VARIANTS[dayIndex % DISCLAIMER_VARIANTS.length];
 
@@ -1018,19 +1032,25 @@ async function buildAiPost(data, dayIndex, style, ctx = {}) {
   // them, they won't be counted as cashtags by validation.
   const styleConfig = {
     snapshot: {
-      directive: "Write this as real prose, not a data export. Do NOT just stack '$COIN price (change%) · $COIN price (change%) · $COIN price (change%)' back to back — that reads like a spreadsheet row, not writing. Weave each coin's price and 24h change into an actual sentence (contrast them, group two that agree and set the third apart, whatever fits today's numbers). Then make a genuine comparison BETWEEN two of the coins using their 7-day percent changes THE CENTERPIECE of the post, not a bolted-on last line — e.g. which of the three moved most over the week, or two coins pulling in opposite directions over 7 days. Do NOT compare a single coin's own 24h change to its own 7d change (that's not a comparison, that's one coin's own recap). Do NOT compare volume or market cap size between coins ('$X has smaller volume than $Y') — that ordering barely changes day to day, so it isn't really about today.",
+      // v5.5: Softened the "7d comparison as CENTERPIECE" mandate. It was
+      // too rigid — when Range Watcher or Volume Lens is the active vibe,
+      // forcing a 7d comparison as the centerpiece overrides the vibe
+      // instruction (which is exactly what Day 7's diagnostic showed: told
+      // Range Watcher, wrote a 7d comparison). Now the 7d comparison is
+      // "available, use if it fits the vibe" instead of "mandatory centerpiece."
+      directive: "Write this as real prose, not a data export. Do NOT just stack '$COIN price (change%) · $COIN price (change%)' back to back — weave each coin's numbers into actual sentences. The data includes 24h change, 7d change, 24h range, volume, and ATH distance — pick whichever angles fit today's vibe instruction. If the vibe calls for range observation, use the 24h high/low. If it calls for comparison, contrast two coins' 7d moves. Don't force the same angle every day. Do NOT compare volume or market cap size between coins — that ordering barely changes day to day.",
       example: "$COIN1 is holding close to flat at $7.91 today, while $COIN2 ($63,199) and $COIN3 ($1,776.83) both push higher, up 0.81% and 0.98%. The bigger story is the week: $COIN3 is up 12.4% over 7 days, more than double $COIN2's 7-day gain. Not financial advice. DYOR.",
     },
     mover: {
-      directive: "Lead with the coin that moved most. State the move and current price in one sentence. Add one line of neutral context using at least two of: volume, 24h high/low range, 7-day change — whatever the data provides. Don't speculate on why it moved.",
+      directive: "Lead with the coin that moved most. State the move and current price in one sentence. Add one line of neutral context using at least two of: volume, 24h high/low range, 7-day change, ATH distance — whatever the data provides and the vibe emphasizes. Don't speculate on why it moved.",
       example: "Today's biggest mover: $COIN1 at $123, up 5.4% in 24h on $4.5B volume. Traded between $118 and $126 today, and is up 11% over the past week. Not financial advice. DYOR.",
     },
     educational: {
-      directive: "Explain ONE crypto concept in plain language in 2 sentences. Then mention one coin's current price as a concrete example. Don't list multiple concepts — pick one and explain it well.",
+      directive: "Explain ONE crypto concept in plain language in 2 sentences. Then mention one coin's current price as a concrete example. Don't list multiple concepts — pick one and explain it well. The concept is the main content; the price is just a concrete anchor.",
       example: "Market cap = price × circulating supply. It values coins already in circulation, not future token unlocks. For context, $COIN1 at $67,234 has a market cap around $1.3T. Not financial advice. DYOR.",
     },
     macro: {
-      directive: "Give the big picture in 2 sentences: total market cap + BTC dominance + (if available) sentiment. Mention one featured coin briefly. Don't list every number — pick the 2-3 that tell the story.",
+      directive: "Give the big picture in 2 sentences: total market cap + BTC dominance + (if available) sentiment. Mention one featured coin briefly. Don't list every number — pick the 2-3 that tell the story and let the vibe guide which angle to emphasize.",
       example: "Total crypto market cap sits at $2.28T with dominance concentrated in the top asset. Fear & Greed at 24/100 (extreme fear). $COIN1 at $67,234 holding above recent lows. Not financial advice. DYOR.",
     },
     anomaly: {
@@ -1038,7 +1058,11 @@ async function buildAiPost(data, dayIndex, style, ctx = {}) {
       example: "Unusual 24h moves: $COIN1 +12.3% (vol $4.5B), $COIN2 -8.5% (vol $2.1B). Both moves stand out against an otherwise quiet watchlist. Not financial advice. DYOR.",
     },
     trending: {
-      directive: "List what's trending on CoinGecko right now. One compact line, then one sentence of context (why these might be getting attention — but no speculation about price direction). Don't describe the rankings — the numbers already show them.",
+      // v5.5: Acknowledged that trending data only has symbol/name/rank —
+      // no prices or changes. The directive now tells the model to work
+      // with what's actually there (rank positioning, search-interest context)
+      // instead of implying price data exists.
+      directive: "List what's trending on CoinGecko right now. The data only includes symbol, name, and market cap rank — no prices or price changes. Work with what's there: rank positioning, name recognition, search-interest context. Don't invent prices or changes. One compact line listing the coins, then one sentence of context for why these might be getting attention (without speculating on price direction).",
       example: "Trending on CoinGecko: $COIN1 (rank #5), $COIN2 (rank #1), $COIN3 (rank #10). Search interest spiking across both established names and newer entrants. Not financial advice. DYOR.",
     },
     sentiment: {
@@ -1097,10 +1121,13 @@ async function buildAiPost(data, dayIndex, style, ctx = {}) {
   } else {
     // Default: snapshot-style with the core watchlist. v5: added 7d change
     // and 24h volume so each coin carries more than 2 raw numbers.
+    // v5.5: Added 24h range (high/low) so Range Watcher vibe — which can now
+    // pair with snapshot thanks to the decoupled rotation — actually has
+    // range data to observe instead of falling back every time.
     const featured = rotateSubset(data, MAX_CASHTAGS_PER_POST, dayIndex);
     for (const d of featured) {
       allowedSymbols.push(d.symbol);
-      dataLines.push(`${d.symbol}: ${fmtPrice(d.price)}, 24h change ${fmtPct(d.change24h)}, 7d change ${fmtPct(d.change7d)}, 24h volume ${fmtMcap(d.volume24h)}, ${fmtPct(d.athChangePct)} from all-time high`);
+      dataLines.push(`${d.symbol}: ${fmtPrice(d.price)}, 24h change ${fmtPct(d.change24h)}, 7d change ${fmtPct(d.change7d)}, 24h range ${fmtPrice(d.low24h)}\u2013${fmtPrice(d.high24h)}, 24h volume ${fmtMcap(d.volume24h)}, ${fmtPct(d.athChangePct)} from all-time high`);
     }
   }
 
@@ -1795,7 +1822,13 @@ async function main() {
     style = "sentiment";
     console.log(`  Decision: extreme sentiment (${fng.value}/100) → "sentiment" template.`);
   } else {
-    const rotation = ["macro", "trending", "snapshot", "mover", "educational"];
+    // v5.5: 7-entry rotation (coprime to the 5-vibe rotation) so vibe×template
+    // pairings cycle through 35 unique combos over 35 days, not 5 over 5.
+    // The 5 base templates appear with strategic repeats (snapshot and
+    // trending each appear twice) to reach 7 entries — this is what breaks
+    // the lockstep. macro always paired with Plain Update was the most
+    // visible symptom of the old bug; now macro cycles through all 5 vibes.
+    const rotation = ["macro", "trending", "snapshot", "mover", "educational", "snapshot", "trending"];
     style = rotation[dayIndex % rotation.length];
     console.log(`  Decision: no anomaly/extreme sentiment, day ${dayIndex} → rotation "${style}".`);
   }

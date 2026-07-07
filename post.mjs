@@ -213,9 +213,14 @@ const BANNED_PHRASES = [
   "buy the dip", "buying opportunity", "who's buying", "who is buying",
   "good entry", "entry point", "target price", "price target",
   "about to explode", "guaranteed", "guarantee", "sure thing",
-  "breakout incoming", "short squeeze", "load up", "your play",
+  "breakout incoming", "short squeeze", "load up", "loading up", "your play",
   "financial advice to buy", "should you buy", "should you sell",
   "sell now", "buy now", "moon", "to the moon", "100x", "get in now",
+  // v4.6: Added trade-decision phrases from the Engagement Architect prompt
+  // that would nudge readers toward a trade (conflict of interest under
+  // Write to Earn, which pays when readers trade off your cashtag).
+  "accumulating", "accumulate", "discount", "trap",
+  "are you buying", "who's loading", "who is loading",
 ];
 
 // ===========================================================================
@@ -931,6 +936,40 @@ async function callAiWithFallback(prompt, allowedSymbols) {
 async function buildAiPost(data, dayIndex, style, ctx = {}) {
   const { globalMarket, fng, anomalies, trending } = ctx;
 
+  // v4.6: Vibe rotation — cycles through 5 tonal angles independently of the
+  // template rotation. Adds tonal variety on top of structural variety so
+  // two "snapshot" posts a week apart don't read the same.
+  //
+  // Inspired by the "Engagement Architect" prompt pattern, but with CTAs
+  // rewritten to ask curiosity questions ("which one are you watching?")
+  // instead of trade-decision questions ("are you buying?"). The latter
+  // would violate the banned-phrases rule and Binance's creator guidance,
+  // since Write to Earn pays when readers trade — nudging toward a trade
+  // is a conflict of interest.
+  const VIBES = [
+    {
+      name: "Plain Update",
+      instruction: "State the facts directly. No spin, no angle. Let the numbers speak.",
+    },
+    {
+      name: "Comparison",
+      instruction: "Find the most interesting contrast in the data (two coins moving differently, or one coin's 24h vs 7d). Lead with the contrast.",
+    },
+    {
+      name: "Range Watcher",
+      instruction: "Focus on where prices are within their recent range. Note if anything is near a 24h extreme. Don't predict breakouts — just observe where things sit.",
+    },
+    {
+      name: "Volume Lens",
+      instruction: "If volume data is available, note whether high-volume coins are moving on that volume or not. If no volume data, fall back to Plain Update.",
+    },
+    {
+      name: "Contrarian Question",
+      instruction: "End with a curiosity question that asks what readers are watching, without suggesting they should buy or sell. E.g. 'Which one are you keeping an eye on?'",
+    },
+  ];
+  const vibe = VIBES[dayIndex % VIBES.length];
+
   // v4.1: Each style now has its own directive + example post.
   // v4.2: Examples now use $COIN1/$COIN2/$COIN3 placeholders instead of real
   // tickers. Previously, the model was copying example cashtags (BTC, ETH, BNB)
@@ -1028,29 +1067,44 @@ async function buildAiPost(data, dayIndex, style, ctx = {}) {
 
   if (allowedSymbols.length === 0 || dataLines.length === 0) return null;
 
-  // v4.1: Rewritten prompt — shorter, more directive, with per-style examples.
-  // v4.2: Added explicit instruction not to copy example symbols, and
-  // examples now use $COIN1/$COIN2/$COIN3 placeholders (see styleConfig).
+  // v4.6: Log the vibe so it shows in the Stage 3 log
+  console.log(`  Vibe: "${vibe.name}" (day ${dayIndex} mod ${VIBES.length})`);
+
+  // v4.6: Restructured prompt with hook/body/CTA format and vibe rotation.
+  // Integrates the "Engagement Architect" pattern (structure + vibes + length
+  // target + emoji budget) while keeping the safety system intact (banned
+  // phrases, filler detection, ungrounded-name check, 3-cashtag max).
+  // v5: Kept the richer data fields, Binance Vision API, expanded watchlist,
+  // minimumFractionDigits fix, size-comparison regex, and rewritten
+  // snapshot/mover directives from the uploaded v5 file.
   const prompt = [
     "You write like a knowledgeable friend texting a quick market update — concise, direct, no filler.",
     "",
     `TASK: ${config.directive}`,
+    "",
+    `TODAY'S VIBE: "${vibe.name}" — ${vibe.instruction}`,
     "",
     "DATA (use only this, do not invent numbers):",
     dataLines.join("\n"),
     "",
     allowedSymbols.length === 1
       ? `CASHTAGS: Use $TICKER for ${allowedSymbols.map((s) => "$" + s).join(", ")} at least once. Use ONLY this symbol — no others.`
-      : `CASHTAGS: Use $TICKER for at least 2 of: ${allowedSymbols.map((s) => "$" + s).join(", ")}. Max ${MAX_CASHTAGS_PER_POST} total. Use ONLY these symbols — no others.`,
+      : `CASHTAGS: Use $TICKER for at least 2 of: ${allowedSymbols.map((s) => "$" + s).join(", ")}. Max ${MAX_CASHTAGS_PER_POST} unique coins. Use ONLY these symbols — no others.`,
+    "",
+    "STRUCTURE (follow this):",
+    "- HOOK: One sentence that grabs attention — a surprising number, a contrast, or a direct question.",
+    "- BODY: 1-2 sentences with the key facts from DATA. Dense, no filler.",
+    "- CTA (optional): End with a curiosity question like 'Which one are you watching?' — NOT a trade question like 'are you buying?'.",
+    "- DISCLAIMER: End with: Not financial advice. DYOR.",
     "",
     "STYLE RULES:",
-    "- 2-3 sentences total. Short and dense beats long and repetitive.",
+    "- 2-4 sentences total. Target 150-300 characters. Short and dense beats long and repetitive.",
     "- Do NOT repeat information. If you said the rank, don't say 'ranking well'.",
-    "- Do NOT use filler phrases: 'making appearances', 'continues to see', 'needs no introduction', 'it's worth noting'.",
+    "- Do NOT use filler phrases: 'making appearances', 'continues to see', 'needs no introduction', 'it's worth noting', 'are trading'.",
     "- Do NOT describe what the numbers already show. Don't say 'maintaining its position' — the rank shows that.",
     "- Do NOT close with a vague volume/attention observation like 'seeing significant volume' or 'notable volume' — a big coin having big volume is true every day and says nothing. Any closing line must be a specific comparison that's only true because of TODAY'S numbers.",
-    "- No trading suggestions, predictions, or hype words.",
-    "- End with exactly: Not financial advice. DYOR.",
+    "- Up to 3 emojis allowed (optional). Use sparingly — only if they add meaning, not decoration.",
+    "- No trading suggestions, predictions, or hype words. No 'buy', 'sell', 'accumulating', 'loading up', 'discount', 'trap'.",
     "",
     `EXAMPLE (${style} style — match this density, don't copy the words):`,
     config.example,

@@ -184,7 +184,22 @@ const COINGECKO_MARKETS_URL = "https://api.coingecko.com/api/v3/coins/markets";
 const COINGECKO_TRENDING_URL = "https://api.coingecko.com/api/v3/search/trending";
 const COINGECKO_GLOBAL_URL = "https://api.coingecko.com/api/v3/global";
 const FEAR_GREED_URL = "https://api.alternative.me/fng/?limit=1";
-const BINANCE_TICKER_URL = "https://api.binance.com/api/v3/ticker/24hr";
+// v5: "Binance ticker error: 451" isn't a bug in this script — it's Binance
+// returning HTTP 451 ("restricted location") to api.binance.com because
+// GitHub Actions runners sit on US/Azure cloud IP ranges that Binance
+// treats as restricted for its main api.binance.com domain, regardless of
+// where you personally are. This is a widely-reported, Binance-side block
+// (see github.com/binance/binance-public-data and Binance's own dev forum),
+// not something fixable from our end on that domain.
+// Binance separately publishes data-api.binance.vision specifically for
+// unauthenticated, read-only public market data (same shape of response,
+// no API key). It's documented as the recommended base URL for market-data
+// -only use cases. Switching to it here because it's the intended fix for
+// this exact situation. If GitHub's IP ranges ever get blocked there too,
+// getBinanceAnomalies() still fails gracefully (see the try/catch around
+// it in main()) — the anomaly template just won't fire that day, same as
+// now, everything else in the pipeline is unaffected either way.
+const BINANCE_TICKER_URL = "https://data-api.binance.vision/api/v3/ticker/24hr";
 
 // ---------------------------------------------------------------------------
 // Phrases that turn a factual update into an implicit trading suggestion.
@@ -671,6 +686,15 @@ function isSafeAiText(text, allowedSymbols) {
     "stands out as",
     "remains a key",
     "remains a focal",
+    // v5: added after seeing the model close a data-rich post with a
+    // generic volume namecheck instead of an actual comparison — these
+    // restate that a big coin has big volume/attention, which is true
+    // every single day and isn't a real observation about today's data.
+    "seeing significant volume",
+    "significant 24h volume",
+    "significant trading volume",
+    "notable volume",
+    "seeing significant",
   ];
   for (const phrase of FILLER_PHRASES) {
     if (lower.includes(phrase)) {
@@ -897,8 +921,8 @@ async function buildAiPost(data, dayIndex, style, ctx = {}) {
   // them, they won't be counted as cashtags by validation.
   const styleConfig = {
     snapshot: {
-      directive: "List today's prices for these coins, weaving in at least one extra data point per coin beyond price and 24h change (7-day change or 24h volume — whatever the data provides). Then one short observation about the overall direction. Don't describe what the numbers show — let the numbers show it.",
-      example: "$COIN1 $67,234 (+2.1% 24h, +8.4% 7d) on $28B volume · $COIN2 $3,456 (-1.2% 24h) · $COIN3 $567 (+0.5% 24h, -3.1% 7d). $COIN1 leading both the day and the week while the others drift. Not financial advice. DYOR.",
+      directive: "List today's prices for these coins — one compact clause each with just price and 24h change, nothing more crammed in per coin. Then use the rest of the post (1 sentence) to point out ONE genuine comparison drawn from the 7-day change or volume numbers in DATA — e.g. a coin moving against its own weekly trend, or one whose volume looks unusually large or small next to the others' size. A vague line like 'X and Y are seeing significant/notable volume' is NOT a comparison — it just restates that big coins have big numbers. Say something that's actually true only because of today's specific data.",
+      example: "$COIN1 $67,234 (+2.1% 24h) · $COIN2 $3,456 (-1.2% 24h) · $COIN3 $567 (+0.5% 24h). $COIN2 is down today despite being up 9% over the past week \u2014 the only one of the three moving against its own weekly trend. Not financial advice. DYOR.",
     },
     mover: {
       directive: "Lead with the coin that moved most. State the move and current price in one sentence. Add one line of neutral context using at least two of: volume, 24h high/low range, 7-day change — whatever the data provides. Don't speculate on why it moved.",
@@ -1005,6 +1029,7 @@ async function buildAiPost(data, dayIndex, style, ctx = {}) {
     "- Do NOT repeat information. If you said the rank, don't say 'ranking well'.",
     "- Do NOT use filler phrases: 'making appearances', 'continues to see', 'needs no introduction', 'it's worth noting'.",
     "- Do NOT describe what the numbers already show. Don't say 'maintaining its position' — the rank shows that.",
+    "- Do NOT close with a vague volume/attention observation like 'seeing significant volume' or 'notable volume' — a big coin having big volume is true every day and says nothing. Any closing line must be a specific comparison that's only true because of TODAY'S numbers.",
     "- No trading suggestions, predictions, or hype words.",
     "- End with exactly: Not financial advice. DYOR.",
     "",

@@ -179,26 +179,34 @@ const QUICKCHART_ENDPOINT = "https://quickchart.io/chart";
 
 // ---------------------------------------------------------------------------
 // NEW (v2): Free data source endpoints (all no-key, all $0).
-// v5.2: CoinGecko now supports an optional Demo API key. Without a key, all
-// requests hit a worldwide-shared 5-15 req/min bucket — the single most
-// fragile dependency in the pipeline. A free Demo key (no card, 10 min
-// signup at coingecko.com/developers) moves you to a dedicated 100 req/min
-// bucket. Pass it via the COINGECKO_API_KEY env var; if unset, falls back
-// to the keyless path with no behavior change.
 // ---------------------------------------------------------------------------
-const COINGECKO_API_KEY = process.env.COINGECKO_API_KEY || null;
 const COINGECKO_MARKETS_URL = "https://api.coingecko.com/api/v3/coins/markets";
 const COINGECKO_TRENDING_URL = "https://api.coingecko.com/api/v3/search/trending";
 const COINGECKO_GLOBAL_URL = "https://api.coingecko.com/api/v3/global";
-
-// Helper: build CoinGecko request headers if a Demo key is set.
-function coingeckoHeaders() {
-  if (!COINGECKO_API_KEY) return {};
-  // Demo plan uses the x-cg-demo-api-key header (not the Pro x-cg-pro-api-key).
-  return { "x-cg-demo-api-key": COINGECKO_API_KEY };
-}
-
 const FEAR_GREED_URL = "https://api.alternative.me/fng/?limit=1";
+
+// v7: Optional CoinGecko Demo API key. Without it, every CoinGecko call in
+// this script shares CoinGecko's worldwide keyless bucket (5-15 req/min,
+// shared with everyone on the internet not using a key). A free, no-card
+// "Demo" key (register at coingecko.com/en/developers/dashboard) moves you
+// onto a dedicated per-account bucket instead — as of 2026 that's 100
+// req/min, not shared with anyone else. This script only ever makes 3
+// CoinGecko calls per run, so either bucket is technically "enough" most
+// days — the point of the key isn't more requests, it's not depending on
+// how many *other* people are hammering the shared bucket at 08:30 UTC.
+// getMarketData() is the one call every single template/style depends on
+// (main() throws if it fails), so this is the single highest-leverage
+// reliability fix available in the pipeline.
+// v7: Read live from process.env rather than capturing once at module load —
+// keeps this testable in both directions (with/without a key set) without
+// needing to reload the module, and costs nothing at runtime since this is
+// called at most 3 times per script run.
+const COINGECKO_API_KEY_ENV = "COINGECKO_API_KEY";
+
+function coingeckoHeaders() {
+  const key = process.env[COINGECKO_API_KEY_ENV];
+  return key ? { "x-cg-demo-api-key": key } : {};
+}
 // v5: "Binance ticker error: 451" isn't a bug in this script — it's Binance
 // returning HTTP 451 ("restricted location") to api.binance.com because
 // GitHub Actions runners sit on US/Azure cloud IP ranges that Binance
@@ -246,7 +254,6 @@ async function getMarketData({ sparkline = false } = {}) {
   const ids = COINS.map((c) => c.id).join(",");
   const sparklineParam = sparkline ? "&sparkline=true" : "";
   const url = `${COINGECKO_MARKETS_URL}?vs_currency=usd&ids=${ids}&price_change_percentage=24h,7d${sparklineParam}`;
-  // v5.2: pass Demo API key in headers if set — moves off shared rate-limit bucket
   const res = await fetch(url, { headers: coingeckoHeaders() });
   if (!res.ok) throw new Error(`CoinGecko markets error: ${res.status}`);
   const rows = await res.json();
@@ -949,6 +956,21 @@ async function callAiWithFallback(prompt, allowedSymbols) {
 // If the required data for a style isn't available, it returns null and
 // main() falls back to a template.
 // ---------------------------------------------------------------------------
+// v7: Disclaimer rotation. Every AI post previously closed on the identical
+// literal string "Not financial advice. DYOR." — same substance every time,
+// but it's also the strongest monotony signal in the whole post (identical
+// last line, every day, regardless of vibe). Rotating the wording keeps the
+// same legal/compliance meaning (still says "not advice, do your own
+// research" every time) while removing that one guaranteed repetition.
+// isSafeAiText() requires the output to contain "dyor" or "not financial
+// advice" (case-insensitive) — every variant below satisfies that check, so
+// this doesn't loosen the compliance gate at all, just varies its wording.
+const DISCLAIMER_VARIANTS = [
+  "Not financial advice. DYOR.",
+  "NFA. Always DYOR.",
+  "Not financial advice — do your own research.",
+];
+
 async function buildAiPost(data, dayIndex, style, ctx = {}) {
   const { globalMarket, fng, anomalies, trending } = ctx;
 
@@ -985,6 +1007,7 @@ async function buildAiPost(data, dayIndex, style, ctx = {}) {
     },
   ];
   const vibe = VIBES[dayIndex % VIBES.length];
+  const disclaimer = DISCLAIMER_VARIANTS[dayIndex % DISCLAIMER_VARIANTS.length];
 
   // v4.1: Each style now has its own directive + example post.
   // v4.2: Examples now use $COIN1/$COIN2/$COIN3 placeholders instead of real
@@ -1069,7 +1092,7 @@ async function buildAiPost(data, dayIndex, style, ctx = {}) {
     }
     if (best) {
       allowedSymbols.push(best.symbol);
-      dataLines.push(`${best.symbol}: ${fmtPrice(best.price)}, 24h change ${fmtPct(best.change24h)}, 7d change ${fmtPct(best.change7d)}, 24h volume ${fmtMcap(best.volume24h)}, 24h range ${fmtPrice(best.low24h)}\u2013${fmtPrice(best.high24h)}`);
+      dataLines.push(`${best.symbol}: ${fmtPrice(best.price)}, 24h change ${fmtPct(best.change24h)}, 7d change ${fmtPct(best.change7d)}, 24h volume ${fmtMcap(best.volume24h)}, 24h range ${fmtPrice(best.low24h)}\u2013${fmtPrice(best.high24h)}, ${fmtPct(best.athChangePct)} from all-time high`);
     }
   } else {
     // Default: snapshot-style with the core watchlist. v5: added 7d change
@@ -1077,7 +1100,7 @@ async function buildAiPost(data, dayIndex, style, ctx = {}) {
     const featured = rotateSubset(data, MAX_CASHTAGS_PER_POST, dayIndex);
     for (const d of featured) {
       allowedSymbols.push(d.symbol);
-      dataLines.push(`${d.symbol}: ${fmtPrice(d.price)}, 24h change ${fmtPct(d.change24h)}, 7d change ${fmtPct(d.change7d)}, 24h volume ${fmtMcap(d.volume24h)}`);
+      dataLines.push(`${d.symbol}: ${fmtPrice(d.price)}, 24h change ${fmtPct(d.change24h)}, 7d change ${fmtPct(d.change7d)}, 24h volume ${fmtMcap(d.volume24h)}, ${fmtPct(d.athChangePct)} from all-time high`);
     }
   }
 
@@ -1111,10 +1134,11 @@ async function buildAiPost(data, dayIndex, style, ctx = {}) {
     "- HOOK: One sentence that grabs attention — a surprising number, a contrast, or a direct question.",
     "- BODY: 1-2 sentences with the key facts from DATA. Dense, no filler.",
     "- CTA (optional): End with a curiosity question like 'Which one are you watching?' — NOT a trade question like 'are you buying?'.",
-    "- DISCLAIMER: End with: Not financial advice. DYOR.",
+    `- DISCLAIMER: End with exactly this line: ${disclaimer}`,
     "",
     "STYLE RULES:",
     "- 2-4 sentences total. Target 150-300 characters. Short and dense beats long and repetitive.",
+    "- If DATA includes a distance from all-time high, that's a genuinely different number every day (unlike 24h/7d change, which you've likely used in a similar shape before) — it's a good candidate for the HOOK or CTA on days when it's notably far from or close to the ATH. Don't force it if it doesn't fit.",
     "- Do NOT repeat information. If you said the rank, don't say 'ranking well'.",
     "- Do NOT use filler phrases: 'making appearances', 'continues to see', 'needs no introduction', 'it's worth noting', 'are trading'.",
     "- Do NOT describe what the numbers already show. Don't say 'maintaining its position' — the rank shows that.",
@@ -1680,7 +1704,10 @@ async function main() {
 
   // Always fetch core market data first — most templates need it.
   const data = await getMarketData();
-  console.log(`  CoinGecko markets: ${data.length} coins fetched. (key: ${COINGECKO_API_KEY ? "Demo plan, 100/min bucket" : "none, shared 5-15/min bucket"})`);
+  const bucketNote = process.env.COINGECKO_API_KEY
+    ? "key: Demo plan, 100/min bucket"
+    : "key: none, shared 5-15/min bucket";
+  console.log(`  CoinGecko markets: ${data.length} coins fetched. (${bucketNote})`);
 
   // Gather supplementary data. Each fetch is independent and fails gracefully
   // — if one source is down, the others still work and the script picks the
@@ -1801,7 +1828,39 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error("Failed:", err.message);
-  process.exit(1);
-});
+// v7: Guard the auto-run so this file can be `import`-ed by a test suite
+// without immediately hitting live network calls and trying to post. Only
+// calls main() when post.mjs is the script node was actually invoked with
+// (`node post.mjs`) — exactly what daily-post.yml and weekly runs already do,
+// so this changes nothing about how the GitHub Actions workflows behave.
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main().catch((err) => {
+    console.error("Failed:", err.message);
+    process.exit(1);
+  });
+}
+
+// v7: Exported for test/post.test.mjs. These are the pure, no-network
+// functions — formatting, template builders, and the validation/safety gate.
+// Deliberately NOT exporting the network fetchers (getMarketData etc.) or
+// the Square API calls — those need real (or mocked) HTTP and belong in an
+// integration-test layer this project doesn't have yet, not a unit suite.
+export {
+  fmtPct,
+  fmtPrice,
+  fmtMcap,
+  rotateSubset,
+  coingeckoHeaders,
+  countCashtags,
+  findUngroundedCoinName,
+  isSafeAiText,
+  enforceMaxLength,
+  buildSnapshotPost,
+  buildTopMoverPost,
+  buildEducationalPost,
+  buildWeeklyRecapPost,
+  buildMacroOverviewPost,
+  buildAnomalyRadarPost,
+  buildTrendingTodayPost,
+  buildMarketSentimentPost,
+};

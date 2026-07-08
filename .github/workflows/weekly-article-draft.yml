@@ -1,0 +1,87 @@
+name: Weekly Article Draft
+
+# v6: Opens a GitHub Issue every Sunday with a draft weekly article.
+# The human edits the Issue body (title + article content between the
+# HTML comment markers), then closes the Issue to trigger the publish
+# workflow (weekly-article-publish.yml).
+#
+# This is the "missing lever" the audit identified — the script generates
+# a draft, but a human reviews/edits it before it goes live. The 20-minute
+# weekly edit is where content quality actually clears the ceiling that
+# free-tier AI daily posts can't.
+
+on:
+  schedule:
+    # 09:00 UTC every Sunday = 11:00 Harare (CAT, UTC+2)
+    # Gives you Sunday morning to review/edit before Monday's audience.
+    - cron: '0 9 * * 0'
+  workflow_dispatch: {}  # manual trigger for testing
+
+permissions:
+  issues: write
+
+jobs:
+  draft:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 'lts/*'
+
+      - name: Generate weekly article draft
+        id: draft
+        env:
+          # RUN_MODE=weekly-draft tells post.mjs to fetch data, build the
+          # article, and print it to stdout (no publish, no Binance key needed).
+          RUN_MODE: weekly-draft
+          # CoinGecko Demo key — recommended, moves off shared rate-limit bucket.
+          COINGECKO_API_KEY: ${{ secrets.COINGECKO_API_KEY }}
+        run: |
+          # Run the script and capture all output
+          OUTPUT=$(node post.mjs)
+          echo "$OUTPUT"
+          
+          # Extract the Issue body between the markers
+          ISSUE_BODY=$(echo "$OUTPUT" | sed -n '/---ISSUE_BODY_START---/,/---ISSUE_BODY_END---/p' | sed '1d;$d')
+          
+          # Save to GITHUB_ENV so later steps can use it
+          {
+            echo "issue_body<<EOF"
+            echo "$ISSUE_BODY"
+            echo "EOF"
+          } >> "$GITHUB_ENV"
+
+      - name: Open GitHub Issue with draft article
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const today = new Date().toISOString().slice(0, 10);
+            const label = 'weekly-article-draft';
+
+            // Make sure the label exists (fails harmlessly if it already does)
+            try {
+              await github.rest.issues.createLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                name: label,
+                color: '0E8A16',
+                description: 'Weekly article draft — edit then close to publish',
+              });
+            } catch (e) {
+              core.info(`Label "${label}" already exists — continuing.`);
+            }
+
+            const { data: issue } = await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `📝 Weekly article draft — week of ${today}`,
+              labels: [label],
+              body: process.env.issue_body,
+            });
+
+            core.info(`Filed #${issue.number}. Edit the body, then close this issue to publish.`);
+            core.setOutput('issue_number', issue.number);

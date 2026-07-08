@@ -34,6 +34,10 @@ import {
   buildAnomalyRadarPost,
   buildTrendingTodayPost,
   buildMarketSentimentPost,
+  // v6: new draft/publish functions
+  buildWeeklyArticleDraft,
+  formatArticleForIssue,
+  parseArticleFromIssue,
 } from "../post.mjs";
 
 // ---------------------------------------------------------------------------
@@ -341,5 +345,109 @@ describe("template builders return valid, non-empty posts", () => {
   test("buildMarketSentimentPost fires on extreme greed", () => {
     const text = buildMarketSentimentPost({ value: 85, classification: "Extreme Greed" }, FIVE_COINS, 0);
     assert.match(text, /Extreme Greed/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v6: weekly article draft/publish functions
+// ---------------------------------------------------------------------------
+
+describe("buildWeeklyArticleDraft", () => {
+  const mockCtx = {
+    globalMarket: { totalMcap: 2.28e12, totalVolume: 8.9e10, btcDominance: 55.8, ethDominance: 18.1, mcapChange24h: 1.5 },
+    fng: { value: 27, classification: "Fear" },
+    anomalies: [{ symbol: "SOL", changePct: 12.3, volume: 4.5e9 }],
+    trending: [{ symbol: "SOL", name: "Solana", rank: 5 }],
+  };
+
+  test("returns { title, body } object with real content", () => {
+    const article = buildWeeklyArticleDraft(FIVE_COINS, 7, mockCtx);
+    assert.ok(article, "expected an article object, got null");
+    assert.ok(article.title, "title missing");
+    assert.ok(article.body, "body missing");
+    assert.match(article.title, /Weekly Crypto Recap/);
+  });
+
+  test("returns null when data is empty", () => {
+    const article = buildWeeklyArticleDraft([], 7, mockCtx);
+    assert.equal(article, null);
+  });
+
+  test("body includes watchlist coins with cashtags", () => {
+    const article = buildWeeklyArticleDraft(FIVE_COINS, 7, mockCtx);
+    // rotateSubset(FIVE_COINS, 3, 7) starts at index 7%5=2, so it picks
+    // XRP, SOL, BNB — not BTC. Just assert at least one cashtag is present.
+    assert.match(article.body, /\$[A-Z]{2,6}/);
+  });
+});
+
+describe("formatArticleForIssue", () => {
+  test("wraps title and body in HTML comment markers", () => {
+    const article = { title: "Test Title", body: "Test body content." };
+    const formatted = formatArticleForIssue(article);
+    assert.match(formatted, /<!-- ARTICLE_TITLE -->/);
+    assert.match(formatted, /<!-- ARTICLE_BODY -->/);
+    assert.match(formatted, /<!-- END -->/);
+    assert.match(formatted, /Test Title/);
+    assert.match(formatted, /Test body content\./);
+  });
+
+  test("includes edit instructions for the human", () => {
+    const article = { title: "T", body: "B" };
+    const formatted = formatArticleForIssue(article);
+    assert.match(formatted, /Edit the title and body/);
+    assert.match(formatted, /close this issue to publish/);
+  });
+
+  test("returns null for missing title or body", () => {
+    assert.equal(formatArticleForIssue(null), null);
+    assert.equal(formatArticleForIssue({ title: "T" }), null);
+    assert.equal(formatArticleForIssue({ body: "B" }), null);
+    assert.equal(formatArticleForIssue({}), null);
+  });
+});
+
+describe("parseArticleFromIssue", () => {
+  test("round-trips through formatArticleForIssue", () => {
+    const original = { title: "Weekly Recap — July 7", body: "## Market Overview\nTotal cap: $2.28T." };
+    const formatted = formatArticleForIssue(original);
+    const parsed = parseArticleFromIssue(formatted);
+    assert.deepEqual(parsed, original);
+  });
+
+  test("extracts edited title and body from a realistic Issue body", () => {
+    const issueBody = [
+      "<!-- ARTICLE_TITLE -->",
+      "My Edited Title",
+      "<!-- ARTICLE_BODY -->",
+      "## My Edited Section",
+      "This is my edited content.",
+      "<!-- END -->",
+      "",
+      "---",
+      "Edit instructions here...",
+    ].join("\n");
+    const parsed = parseArticleFromIssue(issueBody);
+    assert.equal(parsed.title, "My Edited Title");
+    assert.equal(parsed.body, "## My Edited Section\nThis is my edited content.");
+  });
+
+  test("returns null when markers are missing", () => {
+    assert.equal(parseArticleFromIssue("no markers here"), null);
+    assert.equal(parseArticleFromIssue(""), null);
+    assert.equal(parseArticleFromIssue(null), null);
+  });
+
+  test("returns null when markers exist but content is empty", () => {
+    const issueBody = "<!-- ARTICLE_TITLE -->\n\n<!-- ARTICLE_BODY -->\n\n<!-- END -->";
+    const parsed = parseArticleFromIssue(issueBody);
+    assert.equal(parsed, null);
+  });
+
+  test("preserves markdown formatting in body", () => {
+    const article = { title: "T", body: "## Header\n\n- bullet 1\n- bullet 2\n\n**bold text**" };
+    const formatted = formatArticleForIssue(article);
+    const parsed = parseArticleFromIssue(formatted);
+    assert.equal(parsed.body, "## Header\n\n- bullet 1\n- bullet 2\n\n**bold text**");
   });
 });

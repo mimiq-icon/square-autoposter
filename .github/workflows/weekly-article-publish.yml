@@ -1,27 +1,36 @@
 name: Weekly Article Publish
 
-# v6: Triggered when a weekly-article-draft Issue is closed. Reads the
-# (edited) Issue body, parses it back into { title, body }, and publishes
-# it as an article to Binance Square.
+# v8: The other half of the human-in-the-loop weekly article flow. This
+# workflow does the ONLY thing that actually posts the weekly article to
+# Binance Square, and it only runs when a human adds the
+# `approved-for-posting` label to a draft issue opened by
+# weekly-article-draft.yml. Whatever is written in the issue AT THAT MOMENT
+# — edited or not — is exactly what gets posted. See RUN_MODE=weekly-publish
+# in post.mjs.
 #
-# The human's edit workflow:
-#   1. weekly-article-draft.yml opens an Issue with the draft
-#   2. Human edits the title and body between the HTML comment markers
-#   3. Human closes the Issue
-#   4. This workflow fires, parses the edited body, publishes to Binance
+# If this run fails (network hiccup, Binance API error, etc.) it does NOT
+# fall back to posting something else — it fails loudly so you can just
+# remove and re-add the label, or re-run it manually below, once the issue
+# is unlabeled again.
 
 on:
   issues:
-    types: [closed]
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: 'Issue number of the draft to publish (manual retry only)'
+        required: true
+        type: string
 
 permissions:
   issues: write
-  contents: read
 
 jobs:
   publish:
-    # Only run for issues with the 'weekly-article-draft' label
-    if: contains(github.event.issue.labels.*.name, 'weekly-article-draft')
+    # Only proceed on: (a) manual dispatch, or (b) the specific label that
+    # means "publish this" being added — not just any label on any issue.
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.label.name == 'approved-for-posting' }}
     runs-on: ubuntu-latest
     steps:
       - name: Check out repo
@@ -32,29 +41,77 @@ jobs:
         with:
           node-version: 'lts/*'
 
-      - name: Publish edited article to Binance Square
-        env:
-          # RUN_MODE=weekly-publish tells post.mjs to read WEEKLY_ARTICLE_BODY,
-          # parse it, and publish as an article.
-          RUN_MODE: weekly-publish
-          # The edited Issue body — this is what the human reviewed/changed.
-          WEEKLY_ARTICLE_BODY: ${{ github.event.issue.body }}
-          # Binance key required for publishing.
-          BINANCE_SQUARE_OPENAPI_KEY: ${{ secrets.BINANCE_SQUARE_OPENAPI_KEY }}
-        run: node post.mjs
-
-      - name: Comment on the closed Issue with result
-        if: always()
+      - name: Fetch the draft issue's current body
+        id: fetch
         uses: actions/github-script@v7
         with:
           script: |
-            const success = process.env.RUN_CONCLUSION !== 'failure';
-            const outcome = success ? '✅ Published successfully' : '❌ Publish failed — check the Actions log';
-            const postUrl = success ? '\n\nView the published article in your Binance Square profile.' : '';
-            
+            const fs = require('fs');
+            const issueNumber = context.eventName === 'workflow_dispatch'
+              ? parseInt('${{ github.event.inputs.issue_number }}', 10)
+              : context.payload.issue.number;
+
+            const { data: issue } = await github.rest.issues.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+            });
+
+            const labelNames = issue.labels.map((l) => (typeof l === 'string' ? l : l.name));
+            if (!labelNames.includes('weekly-article-draft')) {
+              core.setFailed(`Issue #${issueNumber} isn't a weekly-article-draft issue — refusing to publish it. This guard exists so adding "approved-for-posting" to some unrelated issue can't accidentally trigger a post.`);
+              return;
+            }
+
+            fs.writeFileSync('weekly-draft.json', JSON.stringify({ issueBody: issue.body }, null, 2));
+            core.setOutput('issue_number', issueNumber);
+
+      - name: Publish to Binance Square
+        env:
+          RUN_MODE: weekly-publish
+          BINANCE_SQUARE_OPENAPI_KEY: ${{ secrets.BINANCE_SQUARE_OPENAPI_KEY }}
+          COINGECKO_API_KEY: ${{ secrets.COINGECKO_API_KEY }}
+          # v9: Optional teaser cross-post (title + link) to X/Twitter after
+          # the article publishes. Same "all four or none" behavior as the
+          # daily workflow — see the comment there for setup details.
+          TWITTER_API_KEY: ${{ secrets.TWITTER_API_KEY }}
+          TWITTER_API_SECRET: ${{ secrets.TWITTER_API_SECRET }}
+          TWITTER_ACCESS_TOKEN: ${{ secrets.TWITTER_ACCESS_TOKEN }}
+          TWITTER_ACCESS_TOKEN_SECRET: ${{ secrets.TWITTER_ACCESS_TOKEN_SECRET }}
+        run: node post.mjs
+
+      - name: Close the issue and link the live post
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const result = JSON.parse(fs.readFileSync('publish-result.json', 'utf8'));
+            const issueNumber = ${{ steps.fetch.outputs.issue_number }};
+
+            const link = result.id
+              ? `https://www.binance.com/square/post/${result.id}`
+              : '(no post ID returned by Binance — check the Creator Center to confirm it went out)';
+
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: context.payload.issue.number,
-              body: `### Weekly Article Publish\n\n${outcome}${postUrl}\n\n---\n_Automated by weekly-article-publish.yml_`,
+              issue_number: issueNumber,
+              body: `✅ Published: **${result.title}**\n\n${link}`,
+            });
+
+            try {
+              await github.rest.issues.createLabel({
+                owner: context.repo.owner, repo: context.repo.repo,
+                name: 'published', color: '5319e7', description: 'Weekly article was posted to Binance Square',
+              });
+            } catch (e) { /* already exists — fine */ }
+
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner, repo: context.repo.repo,
+              issue_number: issueNumber, labels: ['published'],
+            });
+            await github.rest.issues.update({
+              owner: context.repo.owner, repo: context.repo.repo,
+              issue_number: issueNumber, state: 'closed',
             });

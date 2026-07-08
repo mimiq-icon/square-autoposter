@@ -1,21 +1,28 @@
 name: Weekly Article Draft
 
-# v6: Opens a GitHub Issue every Sunday with a draft weekly article.
-# The human edits the Issue body (title + article content between the
-# HTML comment markers), then closes the Issue to trigger the publish
-# workflow (weekly-article-publish.yml).
+# v8: This is half of the fix for the biggest gap in the project — the
+# Sunday article used to write itself AND publish itself in the same step,
+# so the one piece of content actually worth a human's attention never got
+# any. This workflow only writes the draft and opens it as a GitHub Issue
+# for review. It makes NO Binance API calls and needs no
+# BINANCE_SQUARE_OPENAPI_KEY — see RUN_MODE=weekly-draft in post.mjs.
 #
-# This is the "missing lever" the audit identified — the script generates
-# a draft, but a human reviews/edits it before it goes live. The 20-minute
-# weekly edit is where content quality actually clears the ceiling that
-# free-tier AI daily posts can't.
+# Publishing happens separately, in weekly-article-publish.yml, and only
+# once you add the `approved-for-posting` label to the issue this creates.
 
 on:
   schedule:
-    # 09:00 UTC every Sunday = 11:00 Harare (CAT, UTC+2)
-    # Gives you Sunday morning to review/edit before Monday's audience.
-    - cron: '0 9 * * 0'
-  workflow_dispatch: {}  # manual trigger for testing
+    # 07:30 UTC every Sunday = 09:30 Harare/CAT time — 1 hour before
+    # daily-post.yml's regular 08:30 UTC run, so the draft issue exists
+    # before daily-post.yml checks the day and steps aside for Sunday.
+    - cron: '30 7 * * 0'
+  workflow_dispatch:
+    inputs:
+      day_index_override:
+        description: 'Diagnostic: override dayIndex (1-31) to test coin rotation. Leave empty for today.'
+        required: false
+        type: string
+        default: ''
 
 permissions:
   issues: write
@@ -32,56 +39,66 @@ jobs:
         with:
           node-version: 'lts/*'
 
-      - name: Generate weekly article draft
-        id: draft
+      - name: Build the weekly article draft
         env:
-          # RUN_MODE=weekly-draft tells post.mjs to fetch data, build the
-          # article, and print it to stdout (no publish, no Binance key needed).
           RUN_MODE: weekly-draft
-          # CoinGecko Demo key — recommended, moves off shared rate-limit bucket.
+          # Optional — only affects which coins get featured in the chart,
+          # not whether this step needs a Binance key (it doesn't).
           COINGECKO_API_KEY: ${{ secrets.COINGECKO_API_KEY }}
-        run: |
-          # Run the script and capture all output
-          OUTPUT=$(node post.mjs)
-          echo "$OUTPUT"
-          
-          # Extract the Issue body between the markers
-          ISSUE_BODY=$(echo "$OUTPUT" | sed -n '/---ISSUE_BODY_START---/,/---ISSUE_BODY_END---/p' | sed '1d;$d')
-          
-          # Save to GITHUB_ENV so later steps can use it
-          {
-            echo "issue_body<<EOF"
-            echo "$ISSUE_BODY"
-            echo "EOF"
-          } >> "$GITHUB_ENV"
+          DAY_INDEX_OVERRIDE: ${{ github.event.inputs.day_index_override }}
+        run: node post.mjs
 
-      - name: Open GitHub Issue with draft article
+      - name: Open or update this week's draft Issue
         uses: actions/github-script@v7
         with:
           script: |
-            const today = new Date().toISOString().slice(0, 10);
+            const fs = require('fs');
+            const draft = JSON.parse(fs.readFileSync('weekly-draft.json', 'utf8'));
             const label = 'weekly-article-draft';
 
-            // Make sure the label exists (fails harmlessly if it already does)
-            try {
-              await github.rest.issues.createLabel({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                name: label,
-                color: '0E8A16',
-                description: 'Weekly article draft — edit then close to publish',
-              });
-            } catch (e) {
-              core.info(`Label "${label}" already exists — continuing.`);
+            // Make sure the labels this flow depends on exist. Fails
+            // harmlessly if they already do.
+            for (const [name, color, description] of [
+              [label, '0e8a16', 'Weekly Binance Square article awaiting human review'],
+              ['approved-for-posting', 'd93f0b', 'Add this label to publish the weekly article as currently written'],
+            ]) {
+              try {
+                await github.rest.issues.createLabel({
+                  owner: context.repo.owner, repo: context.repo.repo, name, color, description,
+                });
+              } catch (e) {
+                core.info(`Label "${name}" already exists — continuing.`);
+              }
             }
 
-            const { data: issue } = await github.rest.issues.create({
+            const issueTitle = `Weekly Article Draft — ${draft.weekRange}`;
+
+            // Avoid opening a duplicate if this workflow reruns the same week
+            // (e.g. a retry) — update the existing open draft instead.
+            const existing = await github.rest.issues.listForRepo({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              title: `📝 Weekly article draft — week of ${today}`,
-              labels: [label],
-              body: process.env.issue_body,
+              state: 'open',
+              labels: label,
+              per_page: 100,
             });
+            const match = existing.data.find((i) => i.title === issueTitle);
 
-            core.info(`Filed #${issue.number}. Edit the body, then close this issue to publish.`);
-            core.setOutput('issue_number', issue.number);
+            if (match) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: match.number,
+                body: draft.issueBody,
+              });
+              core.info(`Updated existing draft issue #${match.number}.`);
+            } else {
+              const { data: issue } = await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: issueTitle,
+                body: draft.issueBody,
+                labels: [label],
+              });
+              core.info(`Opened new draft issue #${issue.number}.`);
+            }

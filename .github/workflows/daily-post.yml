@@ -1,13 +1,12 @@
 name: Daily Binance Square Post
 
-# v6: This workflow runs daily. On Sundays, the script detects the day and
-# skips (logs a message and exits) — the weekly article is now handled by
-# the draft/publish flow:
-#   - weekly-article-draft.yml opens a GitHub Issue with the draft article
-#   - Human edits the Issue body (20-minute weekly review)
-#   - Human closes the Issue → weekly-article-publish.yml publishes it
-# This is the "missing lever" from the audit — the one place human judgment
-# clears the ceiling that free-tier AI daily posts can't.
+# v8 note: this workflow itself is unchanged — same cron, same inputs. What
+# changed is inside post.mjs: on Sundays, main() now logs a message and
+# returns instead of building+publishing the weekly article. That article
+# is handled by weekly-article-draft.yml (opens it as a GitHub Issue) and
+# weekly-article-publish.yml (posts it once you label the issue
+# `approved-for-posting`). See the big comment above runWeeklyDraftMode()
+# in post.mjs for why.
 
 on:
   schedule:
@@ -75,6 +74,18 @@ jobs:
           # is the single highest-leverage reliability fix available.
           # Script behaves exactly as before if this secret isn't set.
           COINGECKO_API_KEY: ${{ secrets.COINGECKO_API_KEY }}
+
+          # v9: Optional cross-post of the same daily text to X/Twitter,
+          # from this same account. All four are required together — if any
+          # is missing, the script logs a one-line skip and moves on; the
+          # Binance Square post above is unaffected either way. Needs an X
+          # developer app with permissions set to "Read and Write" (Keys and
+          # Tokens tab). Note: X moved new developer accounts to pay-per-use
+          # pricing in Feb 2026 — check your own dashboard before enabling.
+          TWITTER_API_KEY: ${{ secrets.TWITTER_API_KEY }}
+          TWITTER_API_SECRET: ${{ secrets.TWITTER_API_SECRET }}
+          TWITTER_ACCESS_TOKEN: ${{ secrets.TWITTER_ACCESS_TOKEN }}
+          TWITTER_ACCESS_TOKEN_SECRET: ${{ secrets.TWITTER_ACCESS_TOKEN_SECRET }}
 
           # Dry run mode — check the box above to test without posting
           DRY_RUN: ${{ github.event.inputs.dry_run == 'true' }}

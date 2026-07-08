@@ -473,6 +473,10 @@ function buildWeeklyRecapPost(data, dayIndex) {
   ].join("\n");
 }
 
+// v6: buildWeeklyImageCaption is now dead code — was only called by the
+// removed tryWeeklyImagePost. Kept temporarily in case the draft workflow
+// wants to attach a caption to the cover image, but not called anywhere.
+// Safe to delete in a future cleanup pass.
 function buildWeeklyImageCaption(featured) {
   const tags = featured.map((d) => `$${d.symbol}`).join(" ");
   return [
@@ -1507,35 +1511,11 @@ async function renderChartPng(chartConfig) {
   return Buffer.from(arrayBuffer);
 }
 
-async function tryWeeklyImagePost(data, dayIndex, apiKey) {
-  try {
-    const featured = rotateSubset(data, MAX_CASHTAGS_PER_POST, dayIndex);
-    const chartConfig = buildWeeklyChartConfig(featured);
-    if (!chartConfig) {
-      console.log("No sparkline data available, skipping image post.");
-      return null;
-    }
-
-    const png = await renderChartPng(chartConfig);
-
-    const tmpFile = path.join(os.tmpdir(), `weekly-chart-${Date.now()}.png`);
-    fs.writeFileSync(tmpFile, png);
-
-    const imageUrl = await uploadImageToSquare(apiKey, tmpFile);
-    fs.unlinkSync(tmpFile);
-
-    const caption = buildWeeklyImageCaption(featured);
-    const result = await publishToSquare(apiKey, {
-      contentType: 1,
-      bodyTextOnly: caption,
-      imageList: [imageUrl],
-    });
-    return result;
-  } catch (err) {
-    console.log(`Weekly image post failed (${err.message}), falling back to text.`);
-    return null;
-  }
-}
+// v6: tryWeeklyImagePost REMOVED — was part of the auto-publish Sunday
+// ladder that the audit identified as the problem (no human-edit gate).
+// The v6 draft/publish flow replaces it. buildWeeklyChartConfig and
+// renderChartPng are retained because the weekly-draft mode still uses
+// them for cover-image generation in the draft workflow (if desired).
 
 // ===========================================================================
 // POSTING
@@ -1735,55 +1715,188 @@ function getWeekRange() {
 //   4. Plain-text weekly recap (if everything fails)
 // ===========================================================================
 
-async function tryWeeklyArticlePost(data, dayIndex, key, ctx) {
-  const article = buildWeeklyArticle(data, dayIndex, ctx);
+// ===========================================================================
+// v6: WEEKLY ARTICLE DRAFT / PUBLISH MODE
+// ---------------------------------------------------------------------------
+// The audit identified this as the missing lever: the script generated a
+// weekly article draft and auto-published it, but there was no human-edit
+// gate. v6 splits the Sunday flow into two modes:
+//
+//   RUN_MODE=weekly-draft   → generate draft, print to stdout (no publish)
+//   RUN_MODE=weekly-publish → publish article from WEEKLY_ARTICLE_BODY env
+//                              var (the edited draft from the GitHub Issue)
+//   RUN_MODE=default (unset) → weekday flow, OR Sunday skip-and-log
+//
+// The two modes are triggered by separate GitHub Actions workflows:
+//   weekly-article-draft.yml   → Sundays, opens an Issue with the draft
+//   weekly-article-publish.yml → when that Issue is closed, publishes it
+//
+// This file supports both modes. The pure functions (buildWeeklyArticleDraft,
+// formatArticleForIssue, parseArticleFromIssue) are exported for testing.
+// ===========================================================================
+
+// v6: Pure function — builds the article draft object from data.
+// Same as the old buildWeeklyArticle, but renamed to make the draft/publish
+// distinction explicit and exported for unit testing.
+function buildWeeklyArticleDraft(data, dayIndex, ctx = {}) {
+  // Delegate to the existing buildWeeklyArticle to avoid duplicating logic.
+  // buildWeeklyArticle is defined later in the file and is hoisted (function
+  // declaration), so this works despite appearing before its definition.
+  return buildWeeklyArticle(data, dayIndex, ctx);
+}
+
+// v6: Pure function — formats the article draft as the body of a GitHub Issue.
+// The Issue body is what the human reads and edits. The edited version is
+// later parsed back by parseArticleFromIssue for the publish step.
+//
+// Format (deliberately simple and parseable):
+//   <!-- ARTICLE_TITLE -->
+//   <title here>
+//   <!-- ARTICLE_BODY -->
+//   <body here, markdown>
+//   <!-- END -->
+//
+// The HTML comments are visible in the rendered Issue but easy to parse.
+// The human edits the title and body lines between the markers.
+function formatArticleForIssue(article) {
+  if (!article || !article.title || !article.body) return null;
+  return [
+    "<!-- ARTICLE_TITLE -->",
+    article.title,
+    "<!-- ARTICLE_BODY -->",
+    article.body,
+    "<!-- END -->",
+    "",
+    "---",
+    "",
+    "✏️ **Edit the title and body above, then close this issue to publish.**",
+    "",
+    "- The publish workflow runs automatically when this issue is closed.",
+    "- Keep the HTML comment markers (`<!-- ARTICLE_TITLE -->` etc.) — the publisher uses them to find your edited content.",
+    "- If you delete a marker, the publisher falls back to the original draft.",
+    "",
+  ].join("\n");
+}
+
+// v6: Pure function — parses an edited Issue body back into { title, body }.
+// Looks for the HTML comment markers from formatArticleForIssue. If a marker
+// is missing or malformed, returns null (the caller falls back to the draft).
+function parseArticleFromIssue(issueBody) {
+  if (!issueBody || typeof issueBody !== "string") return null;
+  const titleMatch = issueBody.match(/<!--\s*ARTICLE_TITLE\s*-->\n(.*?)\n<!--\s*ARTICLE_BODY\s*-->/s);
+  const bodyMatch = issueBody.match(/<!--\s*ARTICLE_BODY\s*-->\n([\s\S]*?)\n<!--\s*END\s*-->/);
+  if (!titleMatch || !bodyMatch) return null;
+  const title = titleMatch[1].trim();
+  const body = bodyMatch[1].trim();
+  if (!title || !body) return null;
+  return { title, body };
+}
+
+// v6: weekly-draft mode — fetches data, builds article draft, prints to stdout.
+// No Binance API key required (nothing is published). The GitHub Actions
+// workflow (weekly-article-draft.yml) captures stdout and uses it as the
+// body of a new GitHub Issue. The human edits the Issue, then closes it
+// to trigger weekly-article-publish.yml.
+async function runWeeklyDraftMode() {
+  console.log("=== RUN_MODE: weekly-draft ===");
+  console.log("Fetching data for weekly article draft...\n");
+
+  const now = new Date();
+  const dayIndex = process.env.DAY_INDEX_OVERRIDE
+    ? parseInt(process.env.DAY_INDEX_OVERRIDE, 10)
+    : now.getDate();
+
+  const data = await getMarketData({ sparkline: true });
+
+  let anomalies = null, trending = null, globalMarket = null, fng = null;
+  try { anomalies = await getBinanceAnomalies(); } catch (e) { console.log(`Anomaly scan skipped: ${e.message}`); }
+  try { trending = await getTrendingCoins(); } catch (e) { console.log(`Trending fetch skipped: ${e.message}`); }
+  try { globalMarket = await getGlobalMarket(); } catch (e) { console.log(`Global market fetch skipped: ${e.message}`); }
+  try { fng = await getFearGreed(); } catch (e) { console.log(`Fear & Greed fetch skipped: ${e.message}`); }
+
+  const ctx = { globalMarket, fng, anomalies, trending };
+  const article = buildWeeklyArticleDraft(data, dayIndex, ctx);
   if (!article) {
-    console.log("Could not build weekly article (missing data), falling back to chart post.");
-    return null;
+    console.error("ERROR: Could not build weekly article draft (missing data).");
+    process.exit(1);
   }
 
-  // Try to render the chart for use as cover image
-  let coverImageUrl = null;
-  try {
-    const featured = rotateSubset(data, MAX_CASHTAGS_PER_POST, dayIndex);
-    const chartConfig = buildWeeklyChartConfig(featured);
-    if (chartConfig) {
-      const png = await renderChartPng(chartConfig);
-      const tmpFile = path.join(os.tmpdir(), `weekly-chart-${Date.now()}.png`);
-      fs.writeFileSync(tmpFile, png);
-      coverImageUrl = await uploadImageToSquare(key, tmpFile);
-      fs.unlinkSync(tmpFile);
-      console.log(`Chart rendered for article cover image.`);
-    }
-  } catch (err) {
-    console.log(`Chart render for article failed (${err.message}), posting article without cover.`);
-    coverImageUrl = null;
+  // Format as Issue body and print — the workflow captures this output.
+  const issueBody = formatArticleForIssue(article);
+  if (!issueBody) {
+    console.error("ERROR: Could not format article for Issue.");
+    process.exit(1);
   }
 
-  // Try to publish as article
-  try {
-    const id = await postArticleToSquare(article.title, article.body, coverImageUrl);
-    console.log(`--- Posted weekly ARTICLE (source: article) ---`);
-    console.log(`Title: ${article.title}`);
-    console.log(`Body length: ${article.body.length} chars`);
-    console.log(`Cover image: ${coverImageUrl ? "yes" : "no"}`);
-    if (isDryRun()) {
-      console.log(`[DRY RUN] No article was actually published. Verify the payload above looks correct, then re-run with dry_run unchecked.`);
-    } else if (id && id !== "dry-run-id") {
-      console.log(`Posted! View it at: https://www.binance.com/square/post/${id}`);
-    }
-    return { id, isArticle: true };
-  } catch (err) {
-    console.log(`Article post failed (${err.message}), falling back to chart-only post.`);
-    return null;
+  // Print the Issue body to stdout. The workflow's `run: node post.mjs` step
+  // output is captured and used as the Issue body via ${{ steps.<id>.outputs.* }}
+  // or by writing to $GITHUB_ENV. We use a simple marker so the workflow
+  // can extract it:
+  console.log("---ISSUE_BODY_START---");
+  console.log(issueBody);
+  console.log("---ISSUE_BODY_END---");
+}
+
+// v6: weekly-publish mode — reads WEEKLY_ARTICLE_BODY env var (the edited
+// Issue body), parses it back into { title, body }, publishes as article.
+// Requires BINANCE_SQUARE_OPENAPI_KEY. Triggered by weekly-article-publish.yml
+// when the draft Issue is closed.
+async function runWeeklyPublishMode() {
+  console.log("=== RUN_MODE: weekly-publish ===");
+
+  const key = process.env.BINANCE_SQUARE_OPENAPI_KEY;
+  if (!key) {
+    throw new Error("Missing BINANCE_SQUARE_OPENAPI_KEY environment variable for weekly-publish mode.");
+  }
+
+  const issueBody = process.env.WEEKLY_ARTICLE_BODY;
+  if (!issueBody) {
+    throw new Error("Missing WEEKLY_ARTICLE_BODY environment variable — the publish workflow must pass the edited Issue body.");
+  }
+
+  const article = parseArticleFromIssue(issueBody);
+  if (!article) {
+    throw new Error("Could not parse article from Issue body — markers missing or malformed. Falling back to draft is not possible in publish mode (no data fetched).");
+  }
+
+  console.log(`Parsed article from Issue:`);
+  console.log(`  Title: ${article.title}`);
+  console.log(`  Body length: ${article.body.length} chars`);
+
+  if (isDryRun()) {
+    console.log("\n[DRY RUN] Would publish this article to Binance Square.");
+    console.log("--- Article body ---");
+    console.log(article.body);
+    console.log("--- End ---");
+    return;
+  }
+
+  const id = await postArticleToSquare(article.title, article.body, null);
+  if (id && id !== "dry-run-id") {
+    console.log(`\n✓ Published! View at: https://www.binance.com/square/post/${id}`);
+  } else {
+    console.log("\n✓ Article likely published, but no ID was returned in the response.");
   }
 }
 
 // ===========================================================================
-// MAIN — smart template selection with Sunday article (v3)
+// MAIN — v6: RUN_MODE dispatch + smart template selection
 // ===========================================================================
 
 async function main() {
+  // v6: RUN_MODE dispatch — check this BEFORE the Binance key requirement,
+  // because weekly-draft mode doesn't need a Binance key (it only generates
+  // a draft and prints it, doesn't publish anything).
+  const runMode = process.env.RUN_MODE || "default";
+
+  if (runMode === "weekly-draft") {
+    return await runWeeklyDraftMode();
+  }
+  if (runMode === "weekly-publish") {
+    return await runWeeklyPublishMode();
+  }
+  // Default mode: weekday daily post flow (or Sunday skip-and-log)
+
   const key = process.env.BINANCE_SQUARE_OPENAPI_KEY;
   if (!key) {
     throw new Error("Missing BINANCE_SQUARE_OPENAPI_KEY environment variable.");
@@ -1793,9 +1906,6 @@ async function main() {
   // v5.3: DAY_INDEX_OVERRIDE lets you dry-run different days back-to-back
   // to test whether the vibe/template rotation actually produces different
   // output, or whether the model's prior dominates regardless of instruction.
-  // Usage: set DAY_INDEX_OVERRIDE=1 (or any integer) in the workflow env or
-  // GitHub Actions inputs. Defaults to today's date if unset — zero
-  // production risk, the override only exists for local/dry-run diagnostics.
   const dayIndex = process.env.DAY_INDEX_OVERRIDE
     ? parseInt(process.env.DAY_INDEX_OVERRIDE, 10)
     : now.getDate();
@@ -1803,6 +1913,21 @@ async function main() {
     console.log(`  [DIAGNOSTIC] DAY_INDEX_OVERRIDE=${dayIndex} (would normally be day ${now.getDate()})`);
   }
   const isSunday = now.getDay() === 0;
+
+  // v6: Sunday in default mode → skip-and-log. The weekly article now goes
+  // through the draft/publish flow (weekly-article-draft.yml opens an Issue,
+  // human edits, weekly-article-publish.yml publishes on Issue close).
+  // The daily-post.yml workflow's Sunday run will log this skip and exit
+  // cleanly instead of auto-publishing.
+  if (isSunday) {
+    console.log("=== Sunday: weekly article draft/publish flow handles today ===");
+    console.log("  This daily-post workflow is skipped on Sundays.");
+    console.log("  The weekly-article-draft workflow opens a GitHub Issue with the draft.");
+    console.log("  Edit the Issue body, then close it — weekly-article-publish publishes the edited version.");
+    console.log("  If you want to force a daily post on Sunday, set RUN_MODE=default and");
+    console.log("  temporarily comment out this skip block.");
+    return;
+  }
 
   // v4: AI is enabled if ANY provider key is set (Groq, OpenRouter, or Gemini)
   // v4.2 BUG FIX: was checking OPENAI_API_KEY (leftover from before the
@@ -1820,53 +1945,6 @@ async function main() {
     console.log(`AI providers configured: ${configuredProviders.join(", ")}`);
   } else {
     console.log(`No AI providers configured — using template mode only.`);
-  }
-
-  // --- Sunday: weekly ARTICLE (v3) with chart as cover image ---
-  // Fallback ladder: article+chart → article-only → chart-only → text recap
-  if (isSunday) {
-    const data = await getMarketData({ sparkline: true });
-
-    // Gather supplementary data for the article body
-    let anomalies = null, trending = null, globalMarket = null, fng = null;
-    try { anomalies = await getBinanceAnomalies(); } catch (e) { console.log(`Anomaly scan skipped: ${e.message}`); }
-    try { trending = await getTrendingCoins(); } catch (e) { console.log(`Trending fetch skipped: ${e.message}`); }
-    try { globalMarket = await getGlobalMarket(); } catch (e) { console.log(`Global market fetch skipped: ${e.message}`); }
-    try { fng = await getFearGreed(); } catch (e) { console.log(`Fear & Greed fetch skipped: ${e.message}`); }
-
-    const ctx = { globalMarket, fng, anomalies, trending };
-
-    // Try article first
-    const articleResult = await tryWeeklyArticlePost(data, dayIndex, key, ctx);
-    if (articleResult) return;
-
-    // Fallback 1: chart-only image post
-    const imageResult = await tryWeeklyImagePost(data, dayIndex, key);
-    if (imageResult) {
-      console.log(`--- Posted weekly chart image (source: image, article fallback) ---`);
-      if (isDryRun()) {
-        console.log(`[DRY RUN] No image post was actually published.`);
-      } else {
-        console.log(`ID: ${imageResult.id ?? "unavailable"}`);
-        console.log(`Link: ${imageResult.shareLink ?? (imageResult.id ? `https://www.binance.com/square/post/${imageResult.id}` : "unavailable")}`);
-      }
-      return;
-    }
-
-    // Fallback 2: plain-text weekly recap
-    const text = buildWeeklyRecapPost(data, dayIndex);
-    console.log(`--- Post preview (source: template, all fallbacks) ---`);
-    console.log(text);
-    console.log("--------------------");
-    const id = await postToSquare(text);
-    if (isDryRun()) {
-      console.log(`[DRY RUN] No post was actually published.`);
-    } else if (id && id !== "dry-run-id") {
-      console.log(`Posted! View it at: https://www.binance.com/square/post/${id}`);
-    } else {
-      console.log("Post likely succeeded, but no ID was returned in the response.");
-    }
-    return;
   }
 
   // ===========================================================================
@@ -2041,4 +2119,8 @@ export {
   buildAnomalyRadarPost,
   buildTrendingTodayPost,
   buildMarketSentimentPost,
+  // v6: new pure functions for draft/publish mode
+  buildWeeklyArticleDraft,
+  formatArticleForIssue,
+  parseArticleFromIssue,
 };

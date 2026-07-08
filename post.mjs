@@ -1,15 +1,55 @@
-// post.mjs  (v3 — upgraded)
+// post.mjs  (v9 — upgraded)
 // ============================================================================
 // Fetches live crypto data from MULTIPLE free, no-key sources and posts to
 // Binance Square with $cashtags.
 //
-// What's new in v3 (vs v2):
+// What's new in v9 (vs v8):
+//   - NEW: Two more rotation styles — "digest" (top-100 breadth: best
+//     gainer, worst loser, how many of the top 100 are green) and
+//     "spotlight" (deep-dive on one coin OUTSIDE the 8-coin core watchlist).
+//     Both are powered by a new getBroadMarketMovers() fetcher (CoinGecko
+//     /coins/markets, top 100 by market cap). Rotation array grew from 7 to
+//     9 entries — still coprime with the 5-vibe rotation, so the full
+//     vibe×template cycle is now 45 days instead of shrinking back toward
+//     lockstep.
+//   - NEW: Optional cross-post of the same text to X/Twitter, from this
+//     SAME account — one voice, syndicated to a second platform. Fully
+//     optional (skips gracefully if the 4 TWITTER_* secrets aren't all
+//     set) and never blocks or fails the Binance Square post if the X call
+//     errors. Posting to X requires user-context auth (OAuth 1.0a or OAuth
+//     2.0 PKCE) as of 2026 — an app-only bearer token cannot post — so this
+//     implements OAuth 1.0a signing directly (no new dependency).
+//   - BUG FIX: fmtPrice() rounded any price under $0.0001 down to a
+//     misleading "$0.00" (4-decimal cap was fine for the original 8-coin
+//     watchlist, whose cheapest coin never got that low, but the new
+//     top-100-wide digest/spotlight styles regularly surface sub-cent meme
+//     coins). Precision now scales with magnitude instead of one fixed cap.
+//   - Scope note: this pass deliberately does NOT include multi-account
+//     deployment, automated "Chat Room" community bots, or CreatorPad
+//     reward-farming automation. Those were in the brainstorm doc but they
+//     center on making a handful of accounts controlled by one operator
+//     look like independent, organically-engaged voices/community — that's
+//     the part that's out of scope here, not the underlying tech.
+//
+// What was new in v8 (preserved):
+//   - BIGGEST CHANGE: the Sunday weekly article no longer builds itself and
+//     publishes itself unattended. It's now RUN_MODE=weekly-draft (writes a
+//     draft, zero Binance calls) + RUN_MODE=weekly-publish (posts only after
+//     a human adds the `approved-for-posting` label to the GitHub Issue the
+//     draft becomes). See weekly-article-draft.yml / weekly-article-publish
+//     .yml and the big comment above runWeeklyDraftMode() in this file.
+//   - The old Sunday auto-publish ladder (article+chart → article-only →
+//     chart-only → text recap, all inside main()) is gone. Weekdays are
+//     completely unaffected; main() on a Sunday now just logs and returns,
+//     leaving the article to the two new workflows.
+//
+// What was new in v3 (preserved, weekday behavior unaffected by v8):
 //   - BUG FIX: Text posts now explicitly send `contentType: 1`. Without it,
 //     Binance was treating posts as articles and only showing the first line
 //     (~6 words). All weekday text posts now publish correctly in full.
-//   - NEW: Weekly ARTICLE post on Sundays — long-form weekly recap with title,
-//     markdown body, and the 7-day chart embedded as cover image. Falls back
-//     to chart-only post, then text weekly recap, on any failure.
+//   - NEW: Weekly ARTICLE builder — long-form weekly recap with title,
+//     markdown body, and a 7-day chart. (As of v8, WHEN this publishes is no
+//     longer automatic on Sundays — see above.)
 //   - NEW: Length guard — any text post over 1500 chars is auto-shortened by
 //     trimming trailing lines until under limit. Prevents silent truncation.
 //
@@ -24,23 +64,31 @@
 //   - Smart template selection: Anomaly > Extreme Sentiment > Rotation
 //
 // What DID NOT change (deliberately):
-//   - Same $0 / no-PC / mobile-only architecture (GitHub Actions + this file).
-//   - Same daily-post.yml workflow — no workflow change needed.
+//   - Same $0 / no-PC / mobile-only architecture (GitHub Actions + this file
+//     plus two small new workflow files — see below — still no server, no PC).
+//   - daily-post.yml itself is unchanged; it just now no-ops on Sundays.
 //   - Same GitHub secrets (BINANCE_SQUARE_OPENAPI_KEY, optional GEMINI_API_KEY).
 //   - Same Binance Square API endpoints and official upload flow.
 //   - Same MAX_CASHTAGS_PER_POST = 3 limit (Binance error 220095).
 //   - Same banned-phrases list and AI safety validation.
-//   - Same fallback philosophy: if anything fails, post *something* rather
-//     than skip a day.
+//   - Same fallback philosophy for the DAILY post: if anything fails, post
+//     *something* rather than skip a day. This does NOT apply to the weekly
+//     article anymore — RUN_MODE=weekly-publish fails loudly instead of
+//     substituting different content for what a human approved.
 //
-// Requires: Node.js 18+ (built-in fetch). No npm install needed.
-// Required env var: BINANCE_SQUARE_OPENAPI_KEY
+// Requires: Node.js 18+ (built-in fetch, crypto). No npm install needed.
+// Required env var: BINANCE_SQUARE_OPENAPI_KEY (not needed for RUN_MODE=weekly-draft)
 // Optional env var: GEMINI_API_KEY (free at aistudio.google.com/apikey)
+// Optional (v9): TWITTER_API_KEY, TWITTER_API_SECRET, TWITTER_ACCESS_TOKEN,
+//   TWITTER_ACCESS_TOKEN_SECRET — all 4 required together to enable the
+//   optional X/Twitter cross-post. See the TWITTER / X CROSS-POST section
+//   below for setup details and 2026 pricing notes.
 // ============================================================================
 
 import fs from "fs";
 import os from "os";
 import path from "path";
+import crypto from "crypto";
 
 // ---------------------------------------------------------------------------
 // Core watchlist — the 5 coins used by snapshot/mover/educational/weekly
@@ -354,6 +402,31 @@ async function getBinanceAnomalies() {
     .slice(0, 5);
 }
 
+// NEW (v9): Broad market movers — the same CoinGecko /coins/markets endpoint
+// as getMarketData(), but scanning the top 100 coins by market cap instead
+// of just the 8-coin COINS watchlist. Powers "digest" (breadth: best/worst
+// of 100, how many are green) and "spotlight" (deep-dive on one coin outside
+// the usual watchlist) — neither of which the 8-coin watchlist alone can
+// answer honestly.
+async function getBroadMarketMovers() {
+  const url = `${COINGECKO_MARKETS_URL}?vs_currency=usd&order=market_cap_desc&per_page=100&page=1&price_change_percentage=24h`;
+  const res = await fetch(url, { headers: coingeckoHeaders() });
+  if (!res.ok) throw new Error(`CoinGecko broad-movers error: ${res.status}`);
+  const rows = await res.json();
+  return rows
+    .map((d) => ({
+      symbol: (d.symbol || "").toUpperCase(),
+      name: d.name,
+      price: d.current_price,
+      change24h: d.price_change_percentage_24h_in_currency ?? d.price_change_percentage_24h,
+      volume24h: d.total_volume,
+      marketCap: d.market_cap,
+      rank: d.market_cap_rank,
+      athChangePct: d.ath_change_percentage,
+    }))
+    .filter((d) => d.change24h !== null && d.change24h !== undefined && !Number.isNaN(d.change24h));
+}
+
 // ===========================================================================
 // FORMAT HELPERS
 // ===========================================================================
@@ -365,11 +438,27 @@ function fmtPct(n) {
 }
 
 function fmtPrice(n) {
+  if (n === null || n === undefined) return "n/a";
   // v5: minimumFractionDigits was missing, so toLocaleString silently
   // dropped trailing zeros ($7.90 -> "$7.9") while other coins in the same
   // post kept 2 decimals ($1,772.31), making prices look inconsistently
   // formatted side by side. Always show at least 2 decimals now.
-  return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: n < 10 ? 4 : 2 })}`;
+  // v9: 4 max decimals (the pre-v9 limit) rounds any coin under $0.0001 to
+  // literally "$0.00" — a materially wrong number, not just a cosmetic
+  // rounding choice. This was latent in the original 8-coin watchlist (its
+  // cheapest coin, DOGE, never dropped that low) but the v9 "digest" and
+  // "spotlight" styles pull from the top-100 market, which regularly
+  // includes sub-cent meme coins. Scale precision to magnitude instead of
+  // using one fixed cap for every price.
+  let maxDecimals;
+  if (n > 0 && n < 0.01) {
+    maxDecimals = 8;
+  } else if (n < 10) {
+    maxDecimals = 4;
+  } else {
+    maxDecimals = 2;
+  }
+  return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: maxDecimals })}`;
 }
 
 // NEW (v2): Format large USD amounts as $X.XXB or $X.XXT for readability.
@@ -473,20 +562,6 @@ function buildWeeklyRecapPost(data, dayIndex) {
   ].join("\n");
 }
 
-// v6: buildWeeklyImageCaption is now dead code — was only called by the
-// removed tryWeeklyImagePost. Kept temporarily in case the draft workflow
-// wants to attach a caption to the cover image, but not called anywhere.
-// Safe to delete in a future cleanup pass.
-function buildWeeklyImageCaption(featured) {
-  const tags = featured.map((d) => `$${d.symbol}`).join(" ");
-  return [
-    "\uD83D\uDCC8 7-day chart: " + tags,
-    "Normalized % change so different price scales are easy to compare at a glance.",
-    "",
-    "Chart only, not a forecast. Always DYOR.",
-  ].join("\n");
-}
-
 // ---------------------------------------------------------------------------
 // NEW (v2): Macro Overview — total market cap, BTC dominance, 24h change,
 // optional sentiment, plus 2 featured coins from the core watchlist.
@@ -575,6 +650,60 @@ function buildMarketSentimentPost(fng, data, dayIndex) {
     `Watching $${coin.symbol} at ${fmtPrice(coin.price)} (${fmtPct(coin.change24h)} 24h).`,
     "",
     "Sentiment reading, not financial advice. Always DYOR.",
+  ].join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// NEW (v9): Top Movers Digest — scans the top 100 coins by market cap (not
+// just the 8-coin core watchlist) for the single best gainer and worst
+// loser, plus a breadth stat (how many of the 100 are green today). Only 2
+// cashtags, well under MAX_CASHTAGS_PER_POST, leaving room for the breadth
+// line.
+// ---------------------------------------------------------------------------
+function buildTopMoversDigestPost(broadMovers) {
+  if (!broadMovers || broadMovers.length === 0) return null;
+  let gainer = null;
+  let loser = null;
+  let greenCount = 0;
+  for (const d of broadMovers) {
+    if (d.change24h >= 0) greenCount++;
+    if (!gainer || d.change24h > gainer.change24h) gainer = d;
+    if (!loser || d.change24h < loser.change24h) loser = d;
+  }
+  if (!gainer || !loser) return null;
+  return [
+    "\uD83D\uDCC8 Top Movers Digest (top 100 by market cap)",
+    `Best 24h: $${gainer.symbol} ${fmtPct(gainer.change24h)}, now ${fmtPrice(gainer.price)}.`,
+    `Worst 24h: $${loser.symbol} ${fmtPct(loser.change24h)}, now ${fmtPrice(loser.price)}.`,
+    `Breadth: ${greenCount}/${broadMovers.length} of the top 100 are green today.`,
+    "",
+    "Market breadth, not a trade signal. Always DYOR.",
+  ].join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// NEW (v9): Market Spotlight — deep-dive on the single biggest 24h mover
+// among the top 100 that ISN'T already one of the 8 core watchlist coins,
+// so this style surfaces genuinely new names instead of re-covering
+// BTC/ETH/etc. every time. Falls back to the single biggest mover overall
+// if every top mover happens to already be in the core watchlist.
+// ---------------------------------------------------------------------------
+function buildMarketSpotlightPost(broadMovers) {
+  if (!broadMovers || broadMovers.length === 0) return null;
+  const coreSymbols = new Set(COINS.map((c) => c.symbol));
+  const sorted = [...broadMovers].sort((a, b) => Math.abs(b.change24h) - Math.abs(a.change24h));
+  const spotlight = sorted.find((d) => !coreSymbols.has(d.symbol)) || sorted[0];
+  if (!spotlight) return null;
+  const direction = spotlight.change24h >= 0 ? "up" : "down";
+  const athLine = (spotlight.athChangePct !== null && spotlight.athChangePct !== undefined)
+    ? ` It's ${fmtPct(spotlight.athChangePct)} from its all-time high.`
+    : "";
+  return [
+    `\uD83D\uDD26 Market Spotlight: $${spotlight.symbol} (${spotlight.name})`,
+    `Rank #${spotlight.rank ?? "n/a"} by market cap, ${direction} ${Math.abs(spotlight.change24h).toFixed(2)}% in 24h to ${fmtPrice(spotlight.price)}.`,
+    `24h volume: ${fmtMcap(spotlight.volume24h)}.${athLine}`,
+    "",
+    "One coin's numbers, not a recommendation. Always DYOR.",
   ].join("\n");
 }
 
@@ -1078,7 +1207,7 @@ const DISCLAIMER_VARIANTS = [
 ];
 
 async function buildAiPost(data, dayIndex, style, ctx = {}) {
-  const { globalMarket, fng, anomalies, trending } = ctx;
+  const { globalMarket, fng, anomalies, trending, broadMovers } = ctx;
 
   // v4.6: Vibe rotation — cycles through 5 tonal angles independently of the
   // template rotation. Adds tonal variety on top of structural variety so
@@ -1175,6 +1304,20 @@ async function buildAiPost(data, dayIndex, style, ctx = {}) {
       directive: "State the Fear & Greed reading and what it means. One sentence on what this extreme historically coincides with — without framing it as a buy/sell signal. Mention one coin's price as an anchor.",
       example: "Fear & Greed Index at 24/100 — extreme fear territory. Historically this reading has coincided with capitulation and high volatility, not a directional signal by itself. $COIN1 at $67,234. Not financial advice. DYOR.",
     },
+    digest: {
+      // v9: Report on breadth across the top 100 coins, not just the 8-coin
+      // watchlist. The point is contrast: one great day + one bad day + how
+      // widely that's shared, not a laundry list of names.
+      directive: "Report on market breadth using the top-100 digest data: the best 24h gainer, the worst 24h loser, and how many of the top 100 coins are green today. State what the breadth number implies about how broad-based today's moves are — don't just list the three numbers with no connective point.",
+      example: "$COIN1 leads the top 100 today at +9.2%, while $COIN2 lags at -6.1%. 62 of the top 100 are green — a broadly positive day, not just one or two names carrying it. Not financial advice. DYOR.",
+    },
+    spotlight: {
+      // v9: Deliberately a single name OUTSIDE the core watchlist — the
+      // whole point is surfacing something the reader isn't already seeing
+      // in every other post.
+      directive: "Spotlight ONE coin from outside the usual watchlist — its market cap rank, 24h move, volume, and (if available) distance from all-time high. This is a deep dive on a single name the reader probably isn't already tracking, not a comparison to other coins.",
+      example: "$COIN1 (rank #34) is up 14.8% in 24h to $2.31 on $310M volume — still 71% below its all-time high. A name outside the usual watchlist worth a second look. Not financial advice. DYOR.",
+    },
   };
 
   const config = styleConfig[style];
@@ -1223,6 +1366,33 @@ async function buildAiPost(data, dayIndex, style, ctx = {}) {
     if (best) {
       allowedSymbols.push(best.symbol);
       dataLines.push(`${best.symbol}: ${fmtPrice(best.price)}, 24h change ${fmtPct(best.change24h)}, 7d change ${fmtPct(best.change7d)}, 24h volume ${fmtMcap(best.volume24h)}, 24h range ${fmtPrice(best.low24h)}\u2013${fmtPrice(best.high24h)}, ${fmtPct(best.athChangePct)} from all-time high`);
+    }
+  } else if (style === "digest" && broadMovers && broadMovers.length > 0) {
+    // v9: top-100 breadth — best gainer, worst loser, green count. Only 2
+    // cashtags so CASHTAGS instruction below stays a "use at least 2" case.
+    let gainer = null;
+    let loser = null;
+    let greenCount = 0;
+    for (const d of broadMovers) {
+      if (d.change24h >= 0) greenCount++;
+      if (!gainer || d.change24h > gainer.change24h) gainer = d;
+      if (!loser || d.change24h < loser.change24h) loser = d;
+    }
+    if (gainer && loser) {
+      allowedSymbols.push(gainer.symbol, loser.symbol);
+      dataLines.push(`Best 24h in top 100: ${gainer.symbol}, ${fmtPct(gainer.change24h)}, price ${fmtPrice(gainer.price)}`);
+      dataLines.push(`Worst 24h in top 100: ${loser.symbol}, ${fmtPct(loser.change24h)}, price ${fmtPrice(loser.price)}`);
+      dataLines.push(`Breadth: ${greenCount} of ${broadMovers.length} top-100 coins are green today`);
+    }
+  } else if (style === "spotlight" && broadMovers && broadMovers.length > 0) {
+    // v9: pick the biggest mover OUTSIDE the core watchlist so this style
+    // always surfaces a name other templates aren't already covering.
+    const coreSymbols = new Set(COINS.map((c) => c.symbol));
+    const sorted = [...broadMovers].sort((a, b) => Math.abs(b.change24h) - Math.abs(a.change24h));
+    const spotlight = sorted.find((d) => !coreSymbols.has(d.symbol)) || sorted[0];
+    if (spotlight) {
+      allowedSymbols.push(spotlight.symbol);
+      dataLines.push(`${spotlight.symbol} (${spotlight.name}): rank #${spotlight.rank ?? "n/a"}, ${fmtPct(spotlight.change24h)} 24h, price ${fmtPrice(spotlight.price)}, volume ${fmtMcap(spotlight.volume24h)}, ${fmtPct(spotlight.athChangePct)} from all-time high`);
     }
   } else {
     // Default: snapshot-style with the core watchlist. v5: added 7d change
@@ -1356,6 +1526,10 @@ function buildTemplatePost(data, dayIndex, style, ctx = {}) {
       return buildTopMoverPost(data);
     case "educational":
       return buildEducationalPost(data, dayIndex);
+    case "digest":
+      return buildTopMoversDigestPost(ctx.broadMovers);
+    case "spotlight":
+      return buildMarketSpotlightPost(ctx.broadMovers);
     default:
       return buildSnapshotPost(data, dayIndex);
   }
@@ -1511,12 +1685,6 @@ async function renderChartPng(chartConfig) {
   return Buffer.from(arrayBuffer);
 }
 
-// v6: tryWeeklyImagePost REMOVED — was part of the auto-publish Sunday
-// ladder that the audit identified as the problem (no human-edit gate).
-// The v6 draft/publish flow replaces it. buildWeeklyChartConfig and
-// renderChartPng are retained because the weekly-draft mode still uses
-// them for cover-image generation in the draft workflow (if desired).
-
 // ===========================================================================
 // POSTING
 // ---------------------------------------------------------------------------
@@ -1609,6 +1777,111 @@ async function postArticleToSquare(title, body, coverImageUrl = null) {
 
   const data = await publishToSquare(key, payload);
   return data?.id;
+}
+
+// ===========================================================================
+// TWITTER / X CROSS-POST (NEW v9, optional)
+// ---------------------------------------------------------------------------
+// Cross-posts the SAME text this script just posted to Binance Square, to
+// X/Twitter, from the SAME account this bot already speaks for. This is
+// syndicating one voice to a second platform — not a way to simulate a
+// second, independent voice.
+//
+// Posting to X requires user-context auth (OAuth 1.0a or OAuth 2.0 PKCE) —
+// as of 2026 a plain app-only bearer token cannot post via POST /2/tweets,
+// so this signs each request with OAuth 1.0a using four secrets from your
+// X developer app (Keys and Tokens tab, app permissions set to "Read and
+// Write"):
+//   TWITTER_API_KEY             (Consumer Key)
+//   TWITTER_API_SECRET          (Consumer Secret)
+//   TWITTER_ACCESS_TOKEN
+//   TWITTER_ACCESS_TOKEN_SECRET
+//
+// Skips gracefully (no error, no throw) if any of the four is missing, so
+// this is fully optional and never blocks the Binance Square post — that
+// post is the primary output; X is a bonus.
+//
+// Note on cost: X moved new developer accounts to pay-per-use pricing in
+// Feb 2026 (on the order of $0.01/post at time of writing) — unlike the
+// rest of this project's stack, this is not guaranteed free. Check your
+// own X developer dashboard before enabling it.
+// ===========================================================================
+
+const TWITTER_POST_URL = "https://api.x.com/2/tweets";
+
+// RFC 3986 percent-encoding — encodeURIComponent leaves !*'() unescaped,
+// which OAuth 1.0a's signature spec requires to be escaped. Without this,
+// signatures silently mismatch for any text containing those characters.
+function percentEncode(str) {
+  return encodeURIComponent(str).replace(/[!*'()]/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase());
+}
+
+// Builds a valid OAuth 1.0a Authorization header for a POST request. X's
+// v2 endpoints sign only the oauth_* params (not the JSON body) — this
+// matches X's documented OAuth 1.0a flow for POST /2/tweets. nonce/timestamp
+// are injectable so tests can assert a deterministic signature; production
+// calls (below) omit them and get fresh random/current values each time.
+function buildOAuth1Header(url, consumerKey, consumerSecret, token, tokenSecret, nonce, timestamp) {
+  const oauthParams = {
+    oauth_consumer_key: consumerKey,
+    oauth_nonce: nonce || crypto.randomBytes(16).toString("hex"),
+    oauth_signature_method: "HMAC-SHA1",
+    oauth_timestamp: timestamp || Math.floor(Date.now() / 1000).toString(),
+    oauth_token: token,
+    oauth_version: "1.0",
+  };
+
+  const paramString = Object.keys(oauthParams)
+    .sort()
+    .map((k) => `${percentEncode(k)}=${percentEncode(oauthParams[k])}`)
+    .join("&");
+
+  const baseString = ["POST", percentEncode(url), percentEncode(paramString)].join("&");
+  const signingKey = `${percentEncode(consumerSecret)}&${percentEncode(tokenSecret)}`;
+  const signature = crypto.createHmac("sha1", signingKey).update(baseString).digest("base64");
+
+  const headerParams = { ...oauthParams, oauth_signature: signature };
+  return "OAuth " + Object.keys(headerParams)
+    .sort()
+    .map((k) => `${percentEncode(k)}="${percentEncode(headerParams[k])}"`)
+    .join(", ");
+}
+
+async function postToTwitter(text) {
+  const consumerKey = process.env.TWITTER_API_KEY;
+  const consumerSecret = process.env.TWITTER_API_SECRET;
+  const token = process.env.TWITTER_ACCESS_TOKEN;
+  const tokenSecret = process.env.TWITTER_ACCESS_TOKEN_SECRET;
+
+  if (!consumerKey || !consumerSecret || !token || !tokenSecret) {
+    console.log("  Twitter cross-post: skipped (TWITTER_* secrets not fully configured).");
+    return null;
+  }
+
+  if (isDryRun()) {
+    console.log("  [DRY RUN] Twitter cross-post: would post, but DRY_RUN is set — skipping.");
+    return null;
+  }
+
+  // X posts cap at 280 chars; Square posts can run up to 1500. Hard-truncate
+  // with an ellipsis as a last resort so a cross-post never fails purely on
+  // length — the full text is already safely on Square regardless.
+  const tweetText = text.length <= 280 ? text : text.slice(0, 277) + "...";
+
+  const authHeader = buildOAuth1Header(TWITTER_POST_URL, consumerKey, consumerSecret, token, tokenSecret);
+  const res = await fetch(TWITTER_POST_URL, {
+    method: "POST",
+    headers: {
+      Authorization: authHeader,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ text: tweetText }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(`Twitter API error: ${data.detail || data.title || res.status}`);
+  }
+  return data.data?.id || null;
 }
 
 // ===========================================================================
@@ -1705,106 +1978,123 @@ function getWeekRange() {
 }
 
 // ===========================================================================
-// SUNDAY WEEKLY ARTICLE (NEW v3)
+// WEEKLY ARTICLE — DRAFT / PUBLISH MODES (v8)
 // ---------------------------------------------------------------------------
-// Tries to post a full weekly article with the 7-day chart as cover image.
-// Fallback ladder:
-//   1. Article + chart cover image (best case)
-//   2. Article without cover image (if chart render fails)
-//   3. Chart-only image post (if article API fails)
-//   4. Plain-text weekly recap (if everything fails)
+// v3 through v7 had the Sunday article build itself and publish itself in
+// the same step, with dry_run as the only brake. That's backwards for the
+// one piece of content in this whole pipeline worth a human's attention —
+// this project's own strategic analysis named the weekly article as "the
+// lever that actually clears the ceiling," and nothing was built to let a
+// human pull that lever before it went out.
+//
+// These two modes split "write it" from "publish it," with a human edit
+// possible in between, and no PC required:
+//
+//   RUN_MODE=weekly-draft   Gathers data, builds the article + a chart
+//                           PREVIEW url (a GET link, not an upload — costs
+//                           nothing and needs no Binance key), and writes
+//                           both to a JSON file. Makes zero Binance API
+//                           calls. weekly-article-draft.yml turns that file
+//                           into a GitHub Issue, editable from the GitHub
+//                           mobile app like any other text field.
+//
+//   RUN_MODE=weekly-publish Reads a JSON file containing the issue's
+//                           CURRENT body (however a human left it) after
+//                           weekly-article-publish.yml extracts it — this
+//                           only runs once a human adds the
+//                           `approved-for-posting` label. Regenerates the
+//                           chart for the SAME dayIndex used at draft time
+//                           (so the coins in the image match the coins in
+//                           the text), uploads it for real, and publishes.
+//
+// Publish mode deliberately does NOT fall back to a chart-only or
+// plain-text post on failure the way the old ladder did. A human already
+// approved specific words; silently substituting different content on
+// failure would defeat the point of asking for approval. It fails loudly
+// instead, so the workflow shows red and the person can just re-run it.
 // ===========================================================================
 
-// ===========================================================================
-// v6: WEEKLY ARTICLE DRAFT / PUBLISH MODE
-// ---------------------------------------------------------------------------
-// The audit identified this as the missing lever: the script generated a
-// weekly article draft and auto-published it, but there was no human-edit
-// gate. v6 splits the Sunday flow into two modes:
-//
-//   RUN_MODE=weekly-draft   → generate draft, print to stdout (no publish)
-//   RUN_MODE=weekly-publish → publish article from WEEKLY_ARTICLE_BODY env
-//                              var (the edited draft from the GitHub Issue)
-//   RUN_MODE=default (unset) → weekday flow, OR Sunday skip-and-log
-//
-// The two modes are triggered by separate GitHub Actions workflows:
-//   weekly-article-draft.yml   → Sundays, opens an Issue with the draft
-//   weekly-article-publish.yml → when that Issue is closed, publishes it
-//
-// This file supports both modes. The pure functions (buildWeeklyArticleDraft,
-// formatArticleForIssue, parseArticleFromIssue) are exported for testing.
-// ===========================================================================
+const DRAFT_ISSUE_MARKER_START = "<!-- weekly-article-draft:start -->";
+const DRAFT_ISSUE_MARKER_END = "<!-- weekly-article-draft:end -->";
 
-// v6: Pure function — builds the article draft object from data.
-// Same as the old buildWeeklyArticle, but renamed to make the draft/publish
-// distinction explicit and exported for unit testing.
-function buildWeeklyArticleDraft(data, dayIndex, ctx = {}) {
-  // Delegate to the existing buildWeeklyArticle to avoid duplicating logic.
-  // buildWeeklyArticle is defined later in the file and is hoisted (function
-  // declaration), so this works despite appearing before its definition.
-  return buildWeeklyArticle(data, dayIndex, ctx);
+// Unlike renderChartPng() (which POSTs and returns PNG bytes for uploading),
+// QuickChart also serves any chart config via a plain GET url. That's free,
+// needs no key, and can be dropped straight into a GitHub Issue's markdown
+// as an image preview — so a human reviewing the draft can see the chart
+// without this script ever touching the Binance API.
+function buildQuickChartPreviewUrl(chartConfig) {
+  const encoded = encodeURIComponent(JSON.stringify(chartConfig));
+  return `${QUICKCHART_ENDPOINT}?c=${encoded}&backgroundColor=%230B0E11&width=800&height=450`;
 }
 
-// v6: Pure function — formats the article draft as the body of a GitHub Issue.
-// The Issue body is what the human reads and edits. The edited version is
-// later parsed back by parseArticleFromIssue for the publish step.
-//
-// Format (deliberately simple and parseable):
-//   <!-- ARTICLE_TITLE -->
-//   <title here>
-//   <!-- ARTICLE_BODY -->
-//   <body here, markdown>
-//   <!-- END -->
-//
-// The HTML comments are visible in the rendered Issue but easy to parse.
-// The human edits the title and body lines between the markers.
-function formatArticleForIssue(article) {
-  if (!article || !article.title || !article.body) return null;
-  return [
-    "<!-- ARTICLE_TITLE -->",
-    article.title,
-    "<!-- ARTICLE_BODY -->",
-    article.body,
-    "<!-- END -->",
+// Builds the full GitHub Issue body for a draft: plain-language instructions
+// first (this is read by a non-developer on a phone), then the chart
+// preview, then the actual article between HTML-comment markers. Everything
+// between the markers is fair game to edit; parseDraftIssue() below is what
+// reads it back after a human has (possibly) changed it.
+function buildDraftIssueBody({ title, body, dayIndex, chartPreviewUrl, weekRange }) {
+  const lines = [
+    `### \uD83D\uDCDD Weekly Article Draft \u2014 ${weekRange}`,
     "",
+    "This was auto-generated. **Nothing publishes until you approve it.**",
+    "",
+    "**To edit (from your phone):** tap the \u22EF menu on this issue \u2192 Edit, and change whatever you like below. Keep the line starting with `#` as the title.",
+    "",
+    "**To publish** (as-is, or after your edits): add the label `approved-for-posting` to this issue. That's the only thing that actually posts it to Binance Square.",
+    "",
+    "**To cancel:** do nothing, or close the issue. It never posts on its own.",
+    "",
+    "There's a hidden line below like `<!-- day_index: 7 -->` \u2014 it just keeps the chart's coin picks matching the text. Fine to leave alone, and fine if it gets deleted by accident; nothing breaks either way.",
+    "",
+  ];
+  if (chartPreviewUrl) {
+    lines.push(`![7-day chart preview](${chartPreviewUrl})`, "");
+  }
+  lines.push(
     "---",
     "",
-    "✏️ **Edit the title and body above, then close this issue to publish.**",
+    DRAFT_ISSUE_MARKER_START,
+    `<!-- day_index: ${dayIndex} -->`,
+    `# ${title}`,
     "",
-    "- The publish workflow runs automatically when this issue is closed.",
-    "- Keep the HTML comment markers (`<!-- ARTICLE_TITLE -->` etc.) — the publisher uses them to find your edited content.",
-    "- If you delete a marker, the publisher falls back to the original draft.",
-    "",
-  ].join("\n");
+    body,
+    DRAFT_ISSUE_MARKER_END,
+  );
+  return lines.join("\n");
 }
 
-// v6: Pure function — parses an edited Issue body back into { title, body }.
-// Looks for the HTML comment markers from formatArticleForIssue. If a marker
-// is missing or malformed, returns null (the caller falls back to the draft).
-function parseArticleFromIssue(issueBody) {
-  if (!issueBody || typeof issueBody !== "string") return null;
-  const titleMatch = issueBody.match(/<!--\s*ARTICLE_TITLE\s*-->\n(.*?)\n<!--\s*ARTICLE_BODY\s*-->/s);
-  const bodyMatch = issueBody.match(/<!--\s*ARTICLE_BODY\s*-->\n([\s\S]*?)\n<!--\s*END\s*-->/);
-  if (!titleMatch || !bodyMatch) return null;
+// Recovers { title, body, dayIndex } from a draft issue body that a human
+// may have hand-edited. Deliberately tolerant: the day_index marker is
+// optional (falls back to null, and the caller defaults to "today" — losing
+// perfect coin-selection consistency isn't worth failing the publish over).
+// The title line is NOT optional — without it there's nothing safe to post,
+// so this returns null and the publish workflow fails loudly rather than
+// guessing.
+function parseDraftIssue(issueBody) {
+  if (!issueBody) return null;
+  const startIdx = issueBody.indexOf(DRAFT_ISSUE_MARKER_START);
+  const endIdx = issueBody.indexOf(DRAFT_ISSUE_MARKER_END);
+  if (startIdx === -1 || endIdx === -1 || endIdx < startIdx) return null;
+
+  const inner = issueBody.slice(startIdx + DRAFT_ISSUE_MARKER_START.length, endIdx).trim();
+
+  const dayIndexMatch = inner.match(/<!--\s*day_index:\s*(\d+)\s*-->/);
+  const dayIndex = dayIndexMatch ? parseInt(dayIndexMatch[1], 10) : null;
+
+  const withoutMarker = inner.replace(/<!--\s*day_index:\s*\d+\s*-->/, "").trim();
+  const titleMatch = withoutMarker.match(/^#\s+(.+)$/m);
+  if (!titleMatch) return null;
   const title = titleMatch[1].trim();
-  const body = bodyMatch[1].trim();
+
+  const body = withoutMarker.slice(withoutMarker.indexOf(titleMatch[0]) + titleMatch[0].length).trim();
   if (!title || !body) return null;
-  return { title, body };
+
+  return { title, body, dayIndex };
 }
 
-// v6: weekly-draft mode — fetches data, builds article draft, prints to stdout.
-// No Binance API key required (nothing is published). The GitHub Actions
-// workflow (weekly-article-draft.yml) captures stdout and uses it as the
-// body of a new GitHub Issue. The human edits the Issue, then closes it
-// to trigger weekly-article-publish.yml.
-async function runWeeklyDraftMode() {
-  console.log("=== RUN_MODE: weekly-draft ===");
-  console.log("Fetching data for weekly article draft...\n");
-
-  const now = new Date();
-  const dayIndex = process.env.DAY_INDEX_OVERRIDE
-    ? parseInt(process.env.DAY_INDEX_OVERRIDE, 10)
-    : now.getDate();
+async function runWeeklyDraftMode(dayIndex) {
+  console.log(`\n=== WEEKLY DRAFT MODE (day ${dayIndex}) ===`);
+  console.log("No Binance calls happen in this mode \u2014 building a draft only.");
 
   const data = await getMarketData({ sparkline: true });
 
@@ -1815,119 +2105,131 @@ async function runWeeklyDraftMode() {
   try { fng = await getFearGreed(); } catch (e) { console.log(`Fear & Greed fetch skipped: ${e.message}`); }
 
   const ctx = { globalMarket, fng, anomalies, trending };
-  const article = buildWeeklyArticleDraft(data, dayIndex, ctx);
-  if (!article) {
-    console.error("ERROR: Could not build weekly article draft (missing data).");
-    process.exit(1);
-  }
+  const article = buildWeeklyArticle(data, dayIndex, ctx);
+  if (!article) throw new Error("Could not build weekly article draft (missing CoinGecko data).");
 
-  // Format as Issue body and print — the workflow captures this output.
-  const issueBody = formatArticleForIssue(article);
-  if (!issueBody) {
-    console.error("ERROR: Could not format article for Issue.");
-    process.exit(1);
-  }
+  const weekRange = getWeekRange();
+  const featured = rotateSubset(data, MAX_CASHTAGS_PER_POST, dayIndex);
+  const chartConfig = buildWeeklyChartConfig(featured);
+  const chartPreviewUrl = chartConfig ? buildQuickChartPreviewUrl(chartConfig) : null;
 
-  // Print the Issue body to stdout. The workflow's `run: node post.mjs` step
-  // output is captured and used as the Issue body via ${{ steps.<id>.outputs.* }}
-  // or by writing to $GITHUB_ENV. We use a simple marker so the workflow
-  // can extract it:
-  console.log("---ISSUE_BODY_START---");
-  console.log(issueBody);
-  console.log("---ISSUE_BODY_END---");
+  const issueBody = buildDraftIssueBody({
+    title: article.title,
+    body: article.body,
+    dayIndex,
+    chartPreviewUrl,
+    weekRange,
+  });
+
+  const outFile = process.env.DRAFT_OUTPUT_FILE || "weekly-draft.json";
+  fs.writeFileSync(outFile, JSON.stringify({ weekRange, title: article.title, issueBody }, null, 2));
+  console.log(`Draft written to ${outFile} (issue body ${issueBody.length} chars).`);
+  console.log(`weekly-article-draft.yml will turn this into a GitHub Issue for review.`);
 }
 
-// v6: weekly-publish mode — reads WEEKLY_ARTICLE_BODY env var (the edited
-// Issue body), parses it back into { title, body }, publishes as article.
-// Requires BINANCE_SQUARE_OPENAPI_KEY. Triggered by weekly-article-publish.yml
-// when the draft Issue is closed.
 async function runWeeklyPublishMode() {
-  console.log("=== RUN_MODE: weekly-publish ===");
-
+  console.log(`\n=== WEEKLY PUBLISH MODE ===`);
   const key = process.env.BINANCE_SQUARE_OPENAPI_KEY;
-  if (!key) {
-    throw new Error("Missing BINANCE_SQUARE_OPENAPI_KEY environment variable for weekly-publish mode.");
+  if (!key) throw new Error("Missing BINANCE_SQUARE_OPENAPI_KEY environment variable.");
+
+  const inFile = process.env.ARTICLE_INPUT_FILE || "weekly-draft.json";
+  if (!fs.existsSync(inFile)) {
+    throw new Error(`${inFile} not found \u2014 the workflow should write the approved issue body here first.`);
+  }
+  const raw = JSON.parse(fs.readFileSync(inFile, "utf8"));
+
+  const parsed = parseDraftIssue(raw.issueBody);
+  if (!parsed) {
+    throw new Error("Could not parse the approved issue body \u2014 make sure the title line (starting with '#') is still present.");
   }
 
-  const issueBody = process.env.WEEKLY_ARTICLE_BODY;
-  if (!issueBody) {
-    throw new Error("Missing WEEKLY_ARTICLE_BODY environment variable — the publish workflow must pass the edited Issue body.");
+  const now = new Date();
+  const dayIndex = parsed.dayIndex !== null ? parsed.dayIndex : now.getDate();
+  const recoveredNote = parsed.dayIndex === null ? " (recovered \u2014 day_index marker was missing)" : "";
+  console.log(`Publishing "${parsed.title}" (dayIndex ${dayIndex}${recoveredNote})`);
+
+  const data = await getMarketData({ sparkline: true });
+  const featured = rotateSubset(data, MAX_CASHTAGS_PER_POST, dayIndex);
+  const chartConfig = buildWeeklyChartConfig(featured);
+
+  let coverImageUrl = null;
+  if (chartConfig) {
+    try {
+      const png = await renderChartPng(chartConfig);
+      const tmpFile = path.join(os.tmpdir(), `weekly-chart-${Date.now()}.png`);
+      fs.writeFileSync(tmpFile, png);
+      coverImageUrl = await uploadImageToSquare(key, tmpFile);
+      fs.unlinkSync(tmpFile);
+      console.log("Chart rendered and uploaded for article cover image.");
+    } catch (err) {
+      console.log(`Chart render/upload failed (${err.message}), publishing without cover image.`);
+    }
   }
 
-  const article = parseArticleFromIssue(issueBody);
-  if (!article) {
-    throw new Error("Could not parse article from Issue body — markers missing or malformed. Falling back to draft is not possible in publish mode (no data fetched).");
-  }
-
-  console.log(`Parsed article from Issue:`);
-  console.log(`  Title: ${article.title}`);
-  console.log(`  Body length: ${article.body.length} chars`);
+  const id = await postArticleToSquare(parsed.title, parsed.body, coverImageUrl);
+  const resultFile = process.env.PUBLISH_RESULT_FILE || "publish-result.json";
+  fs.writeFileSync(resultFile, JSON.stringify({ id: id || null, title: parsed.title }, null, 2));
 
   if (isDryRun()) {
-    console.log("\n[DRY RUN] Would publish this article to Binance Square.");
-    console.log("--- Article body ---");
-    console.log(article.body);
-    console.log("--- End ---");
-    return;
+    console.log(`[DRY RUN] No article was actually published.`);
+  } else if (id) {
+    console.log(`SUCCESS \u2014 posted! View at: https://www.binance.com/square/post/${id}`);
+  } else {
+    console.log(`Post likely succeeded, but no ID was returned in the response.`);
   }
 
-  const id = await postArticleToSquare(article.title, article.body, null);
-  if (id && id !== "dry-run-id") {
-    console.log(`\n✓ Published! View at: https://www.binance.com/square/post/${id}`);
-  } else {
-    console.log("\n✓ Article likely published, but no ID was returned in the response.");
+  // v9: Optional teaser cross-post to X (title + link), same account, same
+  // "never block the real post" guarantee as the daily pipeline's cross-post.
+  if (id && !isDryRun()) {
+    try {
+      const teaser = `${parsed.title}\n\nFull article on Binance Square: https://www.binance.com/square/post/${id}`;
+      const tweetId = await postToTwitter(teaser);
+      if (tweetId) {
+        console.log(`Cross-posted teaser to X: https://x.com/i/web/status/${tweetId}`);
+      }
+    } catch (e) {
+      console.log(`Twitter cross-post failed (article above still published): ${e.message}`);
+    }
   }
 }
 
 // ===========================================================================
-// MAIN — v6: RUN_MODE dispatch + smart template selection
+// MAIN — smart template selection; weekly article handled by separate modes
 // ===========================================================================
 
 async function main() {
-  // v6: RUN_MODE dispatch — check this BEFORE the Binance key requirement,
-  // because weekly-draft mode doesn't need a Binance key (it only generates
-  // a draft and prints it, doesn't publish anything).
-  const runMode = process.env.RUN_MODE || "default";
-
-  if (runMode === "weekly-draft") {
-    return await runWeeklyDraftMode();
-  }
-  if (runMode === "weekly-publish") {
-    return await runWeeklyPublishMode();
-  }
-  // Default mode: weekday daily post flow (or Sunday skip-and-log)
-
-  const key = process.env.BINANCE_SQUARE_OPENAPI_KEY;
-  if (!key) {
-    throw new Error("Missing BINANCE_SQUARE_OPENAPI_KEY environment variable.");
-  }
-
   const now = new Date();
   // v5.3: DAY_INDEX_OVERRIDE lets you dry-run different days back-to-back
   // to test whether the vibe/template rotation actually produces different
   // output, or whether the model's prior dominates regardless of instruction.
+  // Usage: set DAY_INDEX_OVERRIDE=1 (or any integer) in the workflow env or
+  // GitHub Actions inputs. Defaults to today's date if unset — zero
+  // production risk, the override only exists for local/dry-run diagnostics.
   const dayIndex = process.env.DAY_INDEX_OVERRIDE
     ? parseInt(process.env.DAY_INDEX_OVERRIDE, 10)
     : now.getDate();
   if (process.env.DAY_INDEX_OVERRIDE) {
     console.log(`  [DIAGNOSTIC] DAY_INDEX_OVERRIDE=${dayIndex} (would normally be day ${now.getDate()})`);
   }
-  const isSunday = now.getDay() === 0;
 
-  // v6: Sunday in default mode → skip-and-log. The weekly article now goes
-  // through the draft/publish flow (weekly-article-draft.yml opens an Issue,
-  // human edits, weekly-article-publish.yml publishes on Issue close).
-  // The daily-post.yml workflow's Sunday run will log this skip and exit
-  // cleanly instead of auto-publishing.
-  if (isSunday) {
-    console.log("=== Sunday: weekly article draft/publish flow handles today ===");
-    console.log("  This daily-post workflow is skipped on Sundays.");
-    console.log("  The weekly-article-draft workflow opens a GitHub Issue with the draft.");
-    console.log("  Edit the Issue body, then close it — weekly-article-publish publishes the edited version.");
-    console.log("  If you want to force a daily post on Sunday, set RUN_MODE=default and");
-    console.log("  temporarily comment out this skip block.");
-    return;
+  // v8: RUN_MODE dispatch. Unset/"daily" = the original weekday pipeline
+  // below. "weekly-draft" and "weekly-publish" are the two halves of the
+  // human-in-the-loop weekly article flow — see the big comment above
+  // runWeeklyDraftMode(). Neither of them touches the daily pipeline at all.
+  const runMode = process.env.RUN_MODE || "daily";
+  if (runMode === "weekly-draft") {
+    return runWeeklyDraftMode(dayIndex);
   }
+  if (runMode === "weekly-publish") {
+    return runWeeklyPublishMode();
+  }
+
+  const key = process.env.BINANCE_SQUARE_OPENAPI_KEY;
+  if (!key) {
+    throw new Error("Missing BINANCE_SQUARE_OPENAPI_KEY environment variable.");
+  }
+
+  const isSunday = now.getDay() === 0;
 
   // v4: AI is enabled if ANY provider key is set (Groq, OpenRouter, or Gemini)
   // v4.2 BUG FIX: was checking OPENAI_API_KEY (leftover from before the
@@ -1945,6 +2247,20 @@ async function main() {
     console.log(`AI providers configured: ${configuredProviders.join(", ")}`);
   } else {
     console.log(`No AI providers configured — using template mode only.`);
+  }
+
+  // v8: Sunday no longer builds-and-publishes an article unattended here.
+  // That auto-publish ladder (article+chart → article-only → chart-only →
+  // text recap) always found a way to post *something* on Sundays without a
+  // human ever seeing it first — exactly backwards for the one weekly piece
+  // worth a human's 20-minute edit. weekly-article-draft.yml (RUN_MODE=
+  // weekly-draft) now opens a GitHub Issue with the draft on Sunday morning;
+  // weekly-article-publish.yml (RUN_MODE=weekly-publish) posts it only once
+  // a human adds the `approved-for-posting` label. This daily workflow just
+  // steps aside on Sundays so the two don't double-post.
+  if (isSunday) {
+    console.log("Sunday: the weekly article is owned by weekly-article-draft.yml / weekly-article-publish.yml now, not this workflow. Skipping today's daily post.");
+    return;
   }
 
   // ===========================================================================
@@ -1966,6 +2282,7 @@ async function main() {
   let trending = null;
   let globalMarket = null;
   let fng = null;
+  let broadMovers = null;
 
   try {
     anomalies = await getBinanceAnomalies();
@@ -1999,13 +2316,25 @@ async function main() {
     console.log(`  Fear & Greed: skipped (${e.message}).`);
   }
 
+  // v9: Broad market movers (top 100 by market cap) — powers the "digest"
+  // and "spotlight" styles below. Same graceful-degradation pattern as the
+  // other supplementary sources: if this fails, digest/spotlight just won't
+  // be selectable that day (buildTemplatePost/buildAiPost both return null
+  // on missing ctx.broadMovers, and main() falls back to snapshot).
+  try {
+    broadMovers = await getBroadMarketMovers();
+    console.log(`  CoinGecko broad movers: ${broadMovers.length} of top 100 fetched.`);
+  } catch (e) {
+    console.log(`  CoinGecko broad movers: skipped (${e.message}).`);
+  }
+
   // ===========================================================================
   // STAGE 2: STRATEGIST — pick the content angle based on what data shows
   // ===========================================================================
   console.log(`\n=== STAGE 2: STRATEGIST (template selection) ===`);
 
   let style = null;
-  const ctx = { globalMarket, fng, anomalies, trending };
+  const ctx = { globalMarket, fng, anomalies, trending, broadMovers };
 
   if (anomalies && anomalies.length > 0) {
     style = "anomaly";
@@ -2020,7 +2349,10 @@ async function main() {
     // trending each appear twice) to reach 7 entries — this is what breaks
     // the lockstep. macro always paired with Plain Update was the most
     // visible symptom of the old bug; now macro cycles through all 5 vibes.
-    const rotation = ["macro", "trending", "snapshot", "mover", "educational", "snapshot", "trending"];
+    // v9: Extended to 9 entries to add "digest" and "spotlight" — 9 is still
+    // coprime with 5 (gcd(9,5)=1), so the full vibe×template cycle grows to
+    // 45 days instead of shrinking back toward lockstep.
+    const rotation = ["macro", "trending", "snapshot", "mover", "educational", "snapshot", "trending", "digest", "spotlight"];
     style = rotation[dayIndex % rotation.length];
     console.log(`  Decision: no anomaly/extreme sentiment, day ${dayIndex} → rotation "${style}".`);
   }
@@ -2082,6 +2414,19 @@ async function main() {
   } else {
     console.log(`  Post likely succeeded, but no ID was returned in the response.`);
   }
+
+  // v9: Optional cross-post of the same text to X, from this same account.
+  // Never blocks or fails the run — Square is the primary platform, X is a
+  // bonus. Wrapped so a Twitter-side failure never masks the fact that the
+  // Square post above already succeeded.
+  try {
+    const tweetId = await postToTwitter(text);
+    if (tweetId) {
+      console.log(`  Cross-posted to X: https://x.com/i/web/status/${tweetId}`);
+    }
+  } catch (e) {
+    console.log(`  Twitter cross-post failed (Square post above still succeeded): ${e.message}`);
+  }
 }
 
 // v7: Guard the auto-run so this file can be `import`-ed by a test suite
@@ -2119,8 +2464,11 @@ export {
   buildAnomalyRadarPost,
   buildTrendingTodayPost,
   buildMarketSentimentPost,
-  // v6: new pure functions for draft/publish mode
-  buildWeeklyArticleDraft,
-  formatArticleForIssue,
-  parseArticleFromIssue,
+  buildTopMoversDigestPost,
+  buildMarketSpotlightPost,
+  percentEncode,
+  buildOAuth1Header,
+  buildQuickChartPreviewUrl,
+  buildDraftIssueBody,
+  parseDraftIssue,
 };

@@ -1,0 +1,47 @@
+name: Top Movers Digest
+
+# v8: Posts a daily digest of the top 5 gainers + top 5 losers from the
+# top-100 coins by market cap. Different content format from the daily
+# watchlist snapshot — gives readers actual tradeable alpha (what's moving
+# across the broader market today, not just the 8-coin watchlist).
+#
+# Scheduled for 14:00 UTC (16:00 Harare) — afternoon slot so it doesn't
+# collide with the morning daily post (08:30 UTC). Gives readers a second
+# data point later in the day.
+#
+# Uses only CoinGecko (no scraping, no new APIs). Respects the 3-cashtag
+# Binance limit — only the top 3 gainers get cashtags, losers are listed
+# by name only.
+
+on:
+  schedule:
+    - cron: '0 14 * * *'   # 14:00 UTC daily = 16:00 Harare (CAT, UTC+2)
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (print what would be posted, do not post to Binance)'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 'lts/*'
+
+      - name: Post top movers digest
+        env:
+          # RUN_MODE=top-movers-digest tells post.mjs to fetch top-100 coins,
+          # pick top gainers/losers, and post as a single digest.
+          RUN_MODE: top-movers-digest
+          BINANCE_SQUARE_OPENAPI_KEY: ${{ secrets.BINANCE_SQUARE_OPENAPI_KEY }}
+          COINGECKO_API_KEY: ${{ secrets.COINGECKO_API_KEY }}
+          DRY_RUN: ${{ github.event.inputs.dry_run == 'true' }}
+        run: node post.mjs

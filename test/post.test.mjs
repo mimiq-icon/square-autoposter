@@ -34,11 +34,31 @@ import {
   buildAnomalyRadarPost,
   buildTrendingTodayPost,
   buildMarketSentimentPost,
-  // v6: new draft/publish functions
-  buildWeeklyArticleDraft,
-  formatArticleForIssue,
-  parseArticleFromIssue,
+  buildTopMoversDigestPost,
+  buildMarketSpotlightPost,
+  percentEncode,
+  buildOAuth1Header,
+  buildQuickChartPreviewUrl,
+  buildDraftIssueBody,
+  parseDraftIssue,
 } from "../post.mjs";
+
+// ---------------------------------------------------------------------------
+// Fixtures for v9 broad-movers-shaped data (getBroadMarketMovers() output).
+// ---------------------------------------------------------------------------
+function moverCoin(overrides = {}) {
+  return {
+    symbol: "XYZ",
+    name: "Xyzcoin",
+    price: 12.34,
+    change24h: 3.5,
+    volume24h: 5e7,
+    marketCap: 3e8,
+    rank: 42,
+    athChangePct: -55.2,
+    ...overrides,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Fixtures — small, realistic coin objects matching getMarketData()'s shape.
@@ -85,6 +105,20 @@ describe("formatting helpers", () => {
 
   test("fmtPrice allows up to 4 decimals for sub-$10 prices", () => {
     assert.equal(fmtPrice(0.1234), "$0.1234");
+  });
+
+  test("fmtPrice does not round sub-cent prices to a misleading $0.00 (v9 fix)", () => {
+    // Pre-v9, maximumFractionDigits was capped at 4 for all prices under
+    // $10, which rounded meme-coin-tier prices like $0.0000123 down to
+    // "$0.00" — a wrong number, not just a display quirk. This matters now
+    // that digest/spotlight (v9) pull from the full top-100 market instead
+    // of the curated 8-coin watchlist.
+    assert.equal(fmtPrice(0.0000123), "$0.0000123");
+    assert.equal(fmtPrice(0.0000089), "$0.0000089");
+  });
+
+  test("fmtPrice still uses exactly 2 decimals for prices >= $10 (no regression)", () => {
+    assert.equal(fmtPrice(63199), "$63,199.00");
   });
 
   test("fmtMcap scales to B/T and falls back to raw for small numbers", () => {
@@ -349,105 +383,231 @@ describe("template builders return valid, non-empty posts", () => {
 });
 
 // ---------------------------------------------------------------------------
-// v6: weekly article draft/publish functions
+// v8: weekly article draft/publish pipeline — the human-in-the-loop gate
+// that replaced the old Sunday auto-publish ladder. buildDraftIssueBody /
+// parseDraftIssue are two halves of a round trip: one writes a GitHub Issue
+// body, the other reads it back (possibly after a human has edited it).
 // ---------------------------------------------------------------------------
+describe("buildQuickChartPreviewUrl", () => {
+  test("returns a GET url embedding the chart config, no network call", () => {
+    const url = buildQuickChartPreviewUrl({ type: "line", data: { labels: ["a"], datasets: [] } });
+    assert.match(url, /^https:\/\/quickchart\.io\/chart\?c=/);
+    const decoded = JSON.parse(decodeURIComponent(url.split("?c=")[1].split("&")[0]));
+    assert.equal(decoded.type, "line");
+  });
+});
 
-describe("buildWeeklyArticleDraft", () => {
-  const mockCtx = {
-    globalMarket: { totalMcap: 2.28e12, totalVolume: 8.9e10, btcDominance: 55.8, ethDominance: 18.1, mcapChange24h: 1.5 },
-    fng: { value: 27, classification: "Fear" },
-    anomalies: [{ symbol: "SOL", changePct: 12.3, volume: 4.5e9 }],
-    trending: [{ symbol: "SOL", name: "Solana", rank: 5 }],
+describe("buildDraftIssueBody / parseDraftIssue round trip", () => {
+  const draftInput = {
+    title: "Weekly Crypto Recap — July 7–13, 2026",
+    body: "## Market Overview\nTotal crypto market cap: **$2.28T**.\n\n---\n*Weekly recap, not financial advice. Always DYOR.*",
+    dayIndex: 7,
+    chartPreviewUrl: "https://quickchart.io/chart?c=%7B%7D",
+    weekRange: "July 7–13, 2026",
   };
 
-  test("returns { title, body } object with real content", () => {
-    const article = buildWeeklyArticleDraft(FIVE_COINS, 7, mockCtx);
-    assert.ok(article, "expected an article object, got null");
-    assert.ok(article.title, "title missing");
-    assert.ok(article.body, "body missing");
-    assert.match(article.title, /Weekly Crypto Recap/);
+  test("built issue body contains human instructions and the chart preview", () => {
+    const issueBody = buildDraftIssueBody(draftInput);
+    assert.match(issueBody, /Nothing publishes until you approve it/);
+    assert.match(issueBody, /approved-for-posting/);
+    assert.match(issueBody, /!\[7-day chart preview\]/);
+    assert.match(issueBody, /# Weekly Crypto Recap/);
   });
 
-  test("returns null when data is empty", () => {
-    const article = buildWeeklyArticleDraft([], 7, mockCtx);
-    assert.equal(article, null);
+  test("parseDraftIssue recovers the exact title, body, and dayIndex when unedited", () => {
+    const issueBody = buildDraftIssueBody(draftInput);
+    const parsed = parseDraftIssue(issueBody);
+    assert.equal(parsed.title, draftInput.title);
+    assert.equal(parsed.body, draftInput.body);
+    assert.equal(parsed.dayIndex, 7);
   });
 
-  test("body includes watchlist coins with cashtags", () => {
-    const article = buildWeeklyArticleDraft(FIVE_COINS, 7, mockCtx);
-    // rotateSubset(FIVE_COINS, 3, 7) starts at index 7%5=2, so it picks
-    // XRP, SOL, BNB — not BTC. Just assert at least one cashtag is present.
-    assert.match(article.body, /\$[A-Z]{2,6}/);
+  test("parseDraftIssue still works after a human edits the title and body text", () => {
+    const issueBody = buildDraftIssueBody(draftInput);
+    const edited = issueBody
+      .replace("# Weekly Crypto Recap — July 7–13, 2026", "# Big Week for Crypto — July 7–13")
+      .replace("Total crypto market cap: **$2.28T**.", "Total crypto market cap: **$2.28T**, a new high for the year.");
+    const parsed = parseDraftIssue(edited);
+    assert.equal(parsed.title, "Big Week for Crypto — July 7–13");
+    assert.match(parsed.body, /a new high for the year/);
+  });
+
+  test("parseDraftIssue falls back to dayIndex: null if the hidden marker is deleted, but still recovers title/body", () => {
+    const issueBody = buildDraftIssueBody(draftInput);
+    const edited = issueBody.replace(/<!--\s*day_index:\s*7\s*-->\n/, "");
+    const parsed = parseDraftIssue(edited);
+    assert.equal(parsed.dayIndex, null);
+    assert.equal(parsed.title, draftInput.title);
+  });
+
+  test("parseDraftIssue returns null if the title line is deleted entirely", () => {
+    const issueBody = buildDraftIssueBody(draftInput);
+    const edited = issueBody.replace(`# ${draftInput.title}\n\n`, "");
+    assert.equal(parseDraftIssue(edited), null);
+  });
+
+  test("parseDraftIssue returns null for unrelated issue bodies (no markers at all)", () => {
+    assert.equal(parseDraftIssue("Just a normal issue with no draft markers."), null);
+  });
+
+  test("parseDraftIssue returns null for empty/missing input", () => {
+    assert.equal(parseDraftIssue(""), null);
+    assert.equal(parseDraftIssue(null), null);
+  });
+
+  test("buildDraftIssueBody omits the chart preview line when no chart is available", () => {
+    const issueBody = buildDraftIssueBody({ ...draftInput, chartPreviewUrl: null });
+    assert.doesNotMatch(issueBody, /!\[7-day chart preview\]/);
   });
 });
 
-describe("formatArticleForIssue", () => {
-  test("wraps title and body in HTML comment markers", () => {
-    const article = { title: "Test Title", body: "Test body content." };
-    const formatted = formatArticleForIssue(article);
-    assert.match(formatted, /<!-- ARTICLE_TITLE -->/);
-    assert.match(formatted, /<!-- ARTICLE_BODY -->/);
-    assert.match(formatted, /<!-- END -->/);
-    assert.match(formatted, /Test Title/);
-    assert.match(formatted, /Test body content\./);
+// ---------------------------------------------------------------------------
+// v9: buildTopMoversDigestPost — top-100 breadth digest
+// ---------------------------------------------------------------------------
+describe("buildTopMoversDigestPost", () => {
+  test("returns null for empty/missing input", () => {
+    assert.equal(buildTopMoversDigestPost([]), null);
+    assert.equal(buildTopMoversDigestPost(null), null);
   });
 
-  test("includes edit instructions for the human", () => {
-    const article = { title: "T", body: "B" };
-    const formatted = formatArticleForIssue(article);
-    assert.match(formatted, /Edit the title and body/);
-    assert.match(formatted, /close this issue to publish/);
+  test("identifies the best gainer and worst loser correctly", () => {
+    const movers = [
+      moverCoin({ symbol: "AAA", change24h: 12.5 }),
+      moverCoin({ symbol: "BBB", change24h: -8.2 }),
+      moverCoin({ symbol: "CCC", change24h: 1.1 }),
+    ];
+    const post = buildTopMoversDigestPost(movers);
+    assert.match(post, /\$AAA \+12\.50%/);
+    assert.match(post, /\$BBB -8\.20%/);
   });
 
-  test("returns null for missing title or body", () => {
-    assert.equal(formatArticleForIssue(null), null);
-    assert.equal(formatArticleForIssue({ title: "T" }), null);
-    assert.equal(formatArticleForIssue({ body: "B" }), null);
-    assert.equal(formatArticleForIssue({}), null);
+  test("computes breadth (green count) correctly", () => {
+    const movers = [
+      moverCoin({ symbol: "AAA", change24h: 5 }),
+      moverCoin({ symbol: "BBB", change24h: -5 }),
+      moverCoin({ symbol: "CCC", change24h: 0 }),
+      moverCoin({ symbol: "DDD", change24h: -1 }),
+    ];
+    const post = buildTopMoversDigestPost(movers);
+    // AAA and CCC are >= 0 -> 2 of 4 green
+    assert.match(post, /2\/4 of the top 100 are green today/);
+  });
+
+  test("uses only 2 cashtags (gainer + loser), never more", () => {
+    const movers = [
+      moverCoin({ symbol: "AAA", change24h: 9 }),
+      moverCoin({ symbol: "BBB", change24h: -9 }),
+      moverCoin({ symbol: "CCC", change24h: 2 }),
+      moverCoin({ symbol: "DDD", change24h: -2 }),
+    ];
+    const post = buildTopMoversDigestPost(movers);
+    assert.equal(countCashtags(post).length, 2);
   });
 });
 
-describe("parseArticleFromIssue", () => {
-  test("round-trips through formatArticleForIssue", () => {
-    const original = { title: "Weekly Recap — July 7", body: "## Market Overview\nTotal cap: $2.28T." };
-    const formatted = formatArticleForIssue(original);
-    const parsed = parseArticleFromIssue(formatted);
-    assert.deepEqual(parsed, original);
+// ---------------------------------------------------------------------------
+// v9: buildMarketSpotlightPost — deep-dive on one coin outside the watchlist
+// ---------------------------------------------------------------------------
+describe("buildMarketSpotlightPost", () => {
+  test("returns null for empty/missing input", () => {
+    assert.equal(buildMarketSpotlightPost([]), null);
+    assert.equal(buildMarketSpotlightPost(null), null);
   });
 
-  test("extracts edited title and body from a realistic Issue body", () => {
-    const issueBody = [
-      "<!-- ARTICLE_TITLE -->",
-      "My Edited Title",
-      "<!-- ARTICLE_BODY -->",
-      "## My Edited Section",
-      "This is my edited content.",
-      "<!-- END -->",
-      "",
-      "---",
-      "Edit instructions here...",
-    ].join("\n");
-    const parsed = parseArticleFromIssue(issueBody);
-    assert.equal(parsed.title, "My Edited Title");
-    assert.equal(parsed.body, "## My Edited Section\nThis is my edited content.");
+  test("picks the biggest mover that is OUTSIDE the core 8-coin watchlist", () => {
+    const movers = [
+      moverCoin({ symbol: "BTC", change24h: 50 }), // core watchlist coin, biggest move but should be skipped
+      moverCoin({ symbol: "NEWCO", name: "Newcoin", change24h: 8, rank: 77 }),
+    ];
+    const post = buildMarketSpotlightPost(movers);
+    assert.match(post, /\$NEWCO/);
+    assert.doesNotMatch(post, /\$BTC/);
   });
 
-  test("returns null when markers are missing", () => {
-    assert.equal(parseArticleFromIssue("no markers here"), null);
-    assert.equal(parseArticleFromIssue(""), null);
-    assert.equal(parseArticleFromIssue(null), null);
+  test("falls back to the biggest mover overall if every mover is in the core watchlist", () => {
+    const movers = [
+      moverCoin({ symbol: "BTC", change24h: 4 }),
+      moverCoin({ symbol: "ETH", change24h: 9 }),
+    ];
+    const post = buildMarketSpotlightPost(movers);
+    assert.match(post, /\$ETH/);
   });
 
-  test("returns null when markers exist but content is empty", () => {
-    const issueBody = "<!-- ARTICLE_TITLE -->\n\n<!-- ARTICLE_BODY -->\n\n<!-- END -->";
-    const parsed = parseArticleFromIssue(issueBody);
-    assert.equal(parsed, null);
+  test("includes ATH distance when available, omits it gracefully when not", () => {
+    const withAth = buildMarketSpotlightPost([moverCoin({ symbol: "NEWCO", athChangePct: -60 })]);
+    assert.match(withAth, /from its all-time high/);
+    const withoutAth = buildMarketSpotlightPost([moverCoin({ symbol: "NEWCO", athChangePct: null })]);
+    assert.doesNotMatch(withoutAth, /from its all-time high/);
   });
 
-  test("preserves markdown formatting in body", () => {
-    const article = { title: "T", body: "## Header\n\n- bullet 1\n- bullet 2\n\n**bold text**" };
-    const formatted = formatArticleForIssue(article);
-    const parsed = parseArticleFromIssue(formatted);
-    assert.equal(parsed.body, "## Header\n\n- bullet 1\n- bullet 2\n\n**bold text**");
+  test("only uses 1 cashtag", () => {
+    const post = buildMarketSpotlightPost([moverCoin({ symbol: "NEWCO" })]);
+    assert.equal(countCashtags(post).length, 1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v9: Twitter/X OAuth 1.0a signing (percentEncode, buildOAuth1Header)
+// ---------------------------------------------------------------------------
+describe("percentEncode", () => {
+  test("percent-encodes reserved OAuth characters that encodeURIComponent leaves alone", () => {
+    // encodeURIComponent leaves ! * ' ( ) unescaped, but OAuth 1.0a's spec
+    // requires them escaped — this is the exact gap this function exists to close.
+    assert.equal(percentEncode("!"), "%21");
+    assert.equal(percentEncode("*"), "%2A");
+    assert.equal(percentEncode("'"), "%27");
+    assert.equal(percentEncode("("), "%28");
+    assert.equal(percentEncode(")"), "%29");
+  });
+
+  test("encodes spaces as %20, not +", () => {
+    assert.equal(percentEncode("a b"), "a%20b");
+  });
+
+  test("leaves unreserved characters untouched", () => {
+    assert.equal(percentEncode("abc123-._~"), "abc123-._~");
+  });
+});
+
+describe("buildOAuth1Header", () => {
+  const url = "https://api.x.com/2/tweets";
+  const fixedNonce = "abc123nonce";
+  const fixedTimestamp = "1700000000";
+
+  test("produces a deterministic signature for fixed inputs (regression guard)", () => {
+    const header1 = buildOAuth1Header(url, "consumerKey", "consumerSecret", "tok", "tokSecret", fixedNonce, fixedTimestamp);
+    const header2 = buildOAuth1Header(url, "consumerKey", "consumerSecret", "tok", "tokSecret", fixedNonce, fixedTimestamp);
+    assert.equal(header1, header2);
+  });
+
+  test("includes all required OAuth 1.0a fields", () => {
+    const header = buildOAuth1Header(url, "consumerKey", "consumerSecret", "tok", "tokSecret", fixedNonce, fixedTimestamp);
+    assert.match(header, /^OAuth /);
+    assert.match(header, /oauth_consumer_key="consumerKey"/);
+    assert.match(header, /oauth_token="tok"/);
+    assert.match(header, /oauth_signature_method="HMAC-SHA1"/);
+    assert.match(header, /oauth_version="1\.0"/);
+    assert.match(header, /oauth_nonce="abc123nonce"/);
+    assert.match(header, /oauth_timestamp="1700000000"/);
+    assert.match(header, /oauth_signature="[^"]+"/);
+  });
+
+  test("different consumer/token secrets produce different signatures", () => {
+    const header1 = buildOAuth1Header(url, "consumerKey", "secretA", "tok", "tokSecret", fixedNonce, fixedTimestamp);
+    const header2 = buildOAuth1Header(url, "consumerKey", "secretB", "tok", "tokSecret", fixedNonce, fixedTimestamp);
+    assert.notEqual(header1, header2);
+  });
+
+  test("different nonces produce different signatures for otherwise identical requests", () => {
+    const header1 = buildOAuth1Header(url, "consumerKey", "consumerSecret", "tok", "tokSecret", "nonceA", fixedTimestamp);
+    const header2 = buildOAuth1Header(url, "consumerKey", "consumerSecret", "tok", "tokSecret", "nonceB", fixedTimestamp);
+    assert.notEqual(header1, header2);
+  });
+
+  test("omitting nonce/timestamp still produces a well-formed header (production code path)", () => {
+    const header = buildOAuth1Header(url, "consumerKey", "consumerSecret", "tok", "tokSecret");
+    assert.match(header, /^OAuth /);
+    assert.match(header, /oauth_nonce="[a-f0-9]{32}"/); // crypto.randomBytes(16).toString("hex")
+    assert.match(header, /oauth_timestamp="\d+"/);
   });
 });

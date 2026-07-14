@@ -26,6 +26,11 @@ on:
         type: string
         default: ''
 
+# v9.2: Explicit permissions block — fixes "Repository not found" on private repos
+# where the default GITHUB_TOKEN doesn't get read access automatically.
+permissions:
+  contents: read
+
 jobs:
   post:
     runs-on: ubuntu-latest

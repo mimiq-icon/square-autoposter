@@ -32,10 +32,11 @@ jobs:
         with:
           node-version: 'lts/*'
 
-      - name: Install binance-square-cli
+      - name: Install binance-square-cli (pinned to verified commit)
         run: |
-          git clone --depth 1 https://github.com/QuantProcessing/binance-square-cli.git /tmp/bsq
+          git clone https://github.com/QuantProcessing/binance-square-cli.git /tmp/bsq
           cd /tmp/bsq
+          git checkout 5c4cf33a227ecb07eb934554c969233877f26be7
           npm install
           npm run build
 

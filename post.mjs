@@ -2306,6 +2306,30 @@ async function main() {
 
   const isSunday = now.getDay() === 0;
 
+  // v9.2 DIAGNOSTIC: "No AI providers configured" has now been reported twice
+  // with the person insisting the secrets are set in the repo, and the code
+  // reading GROQ_API_KEY/OPENROUTER_API_KEY/GEMINI_API_KEY has been checked
+  // line-by-line three times and is correct. That combination points away
+  // from a code bug and toward the GitHub side: either the secrets aren't
+  // actually reaching this job (e.g. saved under Codespaces/Dependabot
+  // instead of Actions, or saved as Environment secrets while this job
+  // doesn't declare `environment:`), or a value is set but empty/whitespace
+  // (e.g. a trailing newline from a mobile copy-paste). This log line tells
+  // the two cases apart WITHOUT ever printing the secret value itself:
+  //   "unset"        -> the job never received this var at all (GitHub-side
+  //                      scoping problem — wrong secrets tab, or an
+  //                      Environment secret with no `environment:` in the
+  //                      job, or a fork/PR context that strips secrets)
+  //   "empty/blank"  -> the var reached the job but has no real content
+  //                      (bad paste — re-save the secret value)
+  //   "N chars"      -> genuinely set; if this shows and AI still doesn't
+  //                      run, the bug is elsewhere and this comment is wrong
+  for (const envKey of ["GROQ_API_KEY", "OPENROUTER_API_KEY", "GEMINI_API_KEY"]) {
+    const val = process.env[envKey];
+    const state = val === undefined ? "unset" : val.trim().length === 0 ? "empty/blank" : `${val.length} chars`;
+    console.log(`  [DIAGNOSTIC] ${envKey}: ${state}`);
+  }
+
   // v4: AI is enabled if ANY provider key is set (Groq, OpenRouter, or Gemini)
   // v4.2 BUG FIX: was checking OPENAI_API_KEY (leftover from before the
   // OpenRouter swap). If only OPENROUTER_API_KEY was set, aiEnabled evaluated

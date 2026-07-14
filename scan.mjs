@@ -38,13 +38,44 @@ const TRACKED_CREATORS = [
 // Set as SQUARE_CREATOR_ID env var / GitHub secret.
 const MY_CREATOR_ID = process.env.SQUARE_CREATOR_ID || "";
 
+// SECURITY: never let the unverified/unpinned binance-square-cli subprocess
+// see our real secrets, even though the tool claims to be credential-free.
+// execSync inherits the full parent environment by default — that means an
+// unpinned `git clone` of someone else's repo would otherwise run with
+// BINANCE_SQUARE_OPENAPI_KEY, GROQ_API_KEY, OPENROUTER_API_KEY, and
+// SQUARE_CREATOR_ID sitting right there in its process environment. Build an
+// explicit allowlist instead of trusting the tool's own claims about what it
+// touches.
+const SECRET_ENV_KEYS = [
+  "BINANCE_SQUARE_OPENAPI_KEY",
+  "GROQ_API_KEY",
+  "OPENROUTER_API_KEY",
+  "GEMINI_API_KEY",
+  "SQUARE_CREATOR_ID",
+  "TWITTER_API_KEY",
+  "TWITTER_API_SECRET",
+  "TWITTER_ACCESS_TOKEN",
+  "TWITTER_ACCESS_TOKEN_SECRET",
+  "COINGECKO_API_KEY",
+];
+function sanitizedEnv() {
+  const clean = { ...process.env };
+  for (const key of SECRET_ENV_KEYS) delete clean[key];
+  return clean;
+}
+
 // ---------------------------------------------------------------------------
 // Helper: run the binance-square-cli tool and parse JSON output
 // ---------------------------------------------------------------------------
 function runBsq(args) {
   try {
     const cmd = `node ${BSQ_CLI} ${args} --raw 2>/dev/null`;
-    const stdout = execSync(cmd, { encoding: "utf-8", timeout: 60_000, maxBuffer: 10 * 1024 * 1024 });
+    const stdout = execSync(cmd, {
+      encoding: "utf-8",
+      timeout: 60_000,
+      maxBuffer: 10 * 1024 * 1024,
+      env: sanitizedEnv(),
+    });
     // The CLI prints JSON to stdout. --raw gives the full envelope.
     // Try to parse — sometimes there's debug output mixed in, so find the JSON.
     const lines = stdout.trim().split("\n");
@@ -63,7 +94,12 @@ function runBsq(args) {
 function runBsqPretty(args) {
   try {
     const cmd = `node ${BSQ_CLI} ${args} --pretty 2>/dev/null`;
-    const stdout = execSync(cmd, { encoding: "utf-8", timeout: 60_000, maxBuffer: 10 * 1024 * 1024 });
+    const stdout = execSync(cmd, {
+      encoding: "utf-8",
+      timeout: 60_000,
+      maxBuffer: 10 * 1024 * 1024,
+      env: sanitizedEnv(),
+    });
     return stdout.trim();
   } catch (err) {
     console.log(`  CLI error: ${err.message}`);

@@ -2193,6 +2193,81 @@ async function runWeeklyPublishMode() {
   }
 }
 
+// v9.1: Bar chart of 24h % change for the daily post's featured coins.
+// Unlike the weekly chart (which uses sparkline data), this uses the
+// 24h change percentage already in getMarketData() — no extra API call.
+// Renders as a horizontal bar chart: green for up, red for down.
+function buildDailyChangeChartConfig(data, dayIndex) {
+  const featured = rotateSubset(data, MAX_CASHTAGS_PER_POST, dayIndex);
+  if (featured.length === 0) return null;
+
+  const labels = featured.map((d) => `$${d.symbol}`);
+  const values = featured.map((d) => d.change24h || 0);
+  const colors = values.map((v) => (v >= 0 ? "#00FFA3" : "#FF4D4F"));
+
+  return {
+    type: "horizontalBar",
+    data: {
+      labels,
+      datasets: [{
+        data: values,
+        backgroundColor: colors,
+        borderColor: colors,
+        borderWidth: 1,
+      }],
+    },
+    options: {
+      title: { display: true, text: "24h Change (%)", fontColor: "#FFFFFF" },
+      legend: { display: false },
+      scales: {
+        xAxes: [{
+          ticks: {
+            callback: (v) => `${v}%`,
+            fontColor: "#AAAAAA",
+          },
+          gridLines: { color: "#333333" },
+        }],
+        yAxes: [{
+          ticks: { fontColor: "#FFFFFF", fontSize: 14 },
+          gridLines: { display: false },
+        }],
+      },
+    },
+  };
+}
+
+// v9.1: Post text with an optional image attached. If imageUrl is null,
+// posts as text-only (same as the original postToSquare). If imageUrl
+// is present, sends contentType: 1 with imageList — Binance renders it
+// as a text post with an attached image.
+async function postToSquareWithOptionalImage(text, imageUrl) {
+  const key = process.env.BINANCE_SQUARE_OPENAPI_KEY;
+  if (!key) {
+    throw new Error("Missing BINANCE_SQUARE_OPENAPI_KEY environment variable.");
+  }
+  const safeText = enforceMaxLength(text);
+
+  if (isDryRun()) {
+    console.log(`=== DRY RUN (TEXT POST${imageUrl ? " + IMAGE" : ""}) — not posting ===`);
+    console.log(`Payload contentType: 1`);
+    console.log(`Payload bodyTextOnly (${safeText.length} chars):`);
+    console.log(safeText);
+    if (imageUrl) console.log(`Payload imageList: [${imageUrl}]`);
+    console.log(`=== END DRY RUN ===`);
+    return null;
+  }
+
+  const payload = {
+    contentType: CONTENT_TYPE_TEXT,
+    bodyTextOnly: safeText,
+  };
+  if (imageUrl) {
+    payload.imageList = [imageUrl];
+  }
+  const data = await publishToSquare(key, payload);
+  return data?.id;
+}
+
 // ===========================================================================
 // MAIN — smart template selection; weekly article handled by separate modes
 // ===========================================================================
@@ -2400,12 +2475,40 @@ async function main() {
   console.log(`--------------------`);
 
   // ===========================================================================
-  // STAGE 4: PUBLISHER — send to Binance Square
+  // STAGE 4: PUBLISHER — send to Binance Square (with optional chart image)
   // ===========================================================================
   console.log(`\n=== STAGE 4: PUBLISHER (Binance Square) ===`);
   console.log(`  Posting ${text.length} chars as contentType: 1 (text)...`);
 
-  const id = await postToSquare(text);
+  // v9.1: Try to attach a 24h price chart of the featured coins.
+  // The infrastructure already exists (buildWeeklyChartConfig, renderChartPng,
+  // uploadImageToSquare) — we reuse it for daily posts too. If anything fails
+  // (no sparkline data, chart render error, upload error), the post goes out
+  // as text-only. The chart is a visual enhancement, not a requirement.
+  let imageUrl = null;
+  try {
+    // For daily posts, we need sparkline data — but getMarketData() only fetches
+    // sparklines when sparkline:true is passed (used for Sundays). For weekday
+    // posts, we don't have sparklines, so we build a simpler bar chart of 24h
+    // percentage changes instead.
+    if (data.length > 0 && !isDryRun()) {
+      const chartConfig = buildDailyChangeChartConfig(data, dayIndex);
+      if (chartConfig) {
+        console.log(`  Rendering 24h change chart...`);
+        const png = await renderChartPng(chartConfig);
+        const tmpFile = path.join(os.tmpdir(), `daily-chart-${Date.now()}.png`);
+        fs.writeFileSync(tmpFile, png);
+        imageUrl = await uploadImageToSquare(process.env.BINANCE_SQUARE_OPENAPI_KEY, tmpFile);
+        fs.unlinkSync(tmpFile);
+        console.log(`  Chart uploaded: ${imageUrl ? "yes" : "no"}`);
+      }
+    }
+  } catch (err) {
+    console.log(`  Chart generation failed (${err.message}) — posting text-only.`);
+    imageUrl = null;
+  }
+
+  const id = await postToSquareWithOptionalImage(text, imageUrl);
   if (isDryRun()) {
     console.log(`  [DRY RUN] No post was actually published.`);
     console.log(`  Re-run with dry_run unchecked to publish for real.`);

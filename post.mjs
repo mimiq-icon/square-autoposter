@@ -2268,6 +2268,51 @@ async function postToSquareWithOptionalImage(text, imageUrl) {
   return data?.id;
 }
 
+// v9.2: Standalone top-movers-digest mode. The workflow sets
+// RUN_MODE=top-movers-digest but this mode was never handled in main() —
+// it fell through to the daily pipeline and posted a near-duplicate.
+// Now it fetches broad market movers, builds the digest, and posts it
+// as a standalone piece (not part of the daily rotation).
+async function runTopMoversDigestMode() {
+  console.log("=== RUN_MODE: top-movers-digest ===");
+
+  const key = process.env.BINANCE_SQUARE_OPENAPI_KEY;
+  if (!key) {
+    throw new Error("Missing BINANCE_SQUARE_OPENAPI_KEY for top-movers-digest mode.");
+  }
+
+  console.log("Fetching top 100 coins by market cap...");
+  const broadMovers = await getBroadMarketMovers();
+  console.log(`  Fetched ${broadMovers.length} coins.`);
+
+  if (!broadMovers || broadMovers.length === 0) {
+    console.log("No broad market data — skipping digest post.");
+    return;
+  }
+
+  const text = buildTopMoversDigestPost(broadMovers);
+  if (!text) {
+    console.log("Could not build digest text — skipping post.");
+    return;
+  }
+
+  console.log(`\n--- Post preview ---`);
+  console.log(text);
+  console.log(`--------------------`);
+
+  if (isDryRun()) {
+    console.log("[DRY RUN] No post was actually published.");
+    return;
+  }
+
+  const id = await postToSquare(text);
+  if (id && id !== "dry-run-id") {
+    console.log(`\n✓ Posted! View at: https://www.binance.com/square/post/${id}`);
+  } else {
+    console.log("\n✓ Post likely succeeded, but no ID was returned.");
+  }
+}
+
 // ===========================================================================
 // MAIN — smart template selection; weekly article handled by separate modes
 // ===========================================================================
@@ -2291,12 +2336,19 @@ async function main() {
   // below. "weekly-draft" and "weekly-publish" are the two halves of the
   // human-in-the-loop weekly article flow — see the big comment above
   // runWeeklyDraftMode(). Neither of them touches the daily pipeline at all.
+  // v9.2: Added "top-movers-digest" — previously the workflow set this mode
+  // but main() never checked for it, so it fell through to the daily pipeline
+  // and posted a near-duplicate of the morning post. Now it correctly runs
+  // the standalone digest builder.
   const runMode = process.env.RUN_MODE || "daily";
   if (runMode === "weekly-draft") {
     return runWeeklyDraftMode(dayIndex);
   }
   if (runMode === "weekly-publish") {
     return runWeeklyPublishMode();
+  }
+  if (runMode === "top-movers-digest") {
+    return await runTopMoversDigestMode();
   }
 
   const key = process.env.BINANCE_SQUARE_OPENAPI_KEY;
@@ -2305,30 +2357,6 @@ async function main() {
   }
 
   const isSunday = now.getDay() === 0;
-
-  // v9.2 DIAGNOSTIC: "No AI providers configured" has now been reported twice
-  // with the person insisting the secrets are set in the repo, and the code
-  // reading GROQ_API_KEY/OPENROUTER_API_KEY/GEMINI_API_KEY has been checked
-  // line-by-line three times and is correct. That combination points away
-  // from a code bug and toward the GitHub side: either the secrets aren't
-  // actually reaching this job (e.g. saved under Codespaces/Dependabot
-  // instead of Actions, or saved as Environment secrets while this job
-  // doesn't declare `environment:`), or a value is set but empty/whitespace
-  // (e.g. a trailing newline from a mobile copy-paste). This log line tells
-  // the two cases apart WITHOUT ever printing the secret value itself:
-  //   "unset"        -> the job never received this var at all (GitHub-side
-  //                      scoping problem — wrong secrets tab, or an
-  //                      Environment secret with no `environment:` in the
-  //                      job, or a fork/PR context that strips secrets)
-  //   "empty/blank"  -> the var reached the job but has no real content
-  //                      (bad paste — re-save the secret value)
-  //   "N chars"      -> genuinely set; if this shows and AI still doesn't
-  //                      run, the bug is elsewhere and this comment is wrong
-  for (const envKey of ["GROQ_API_KEY", "OPENROUTER_API_KEY", "GEMINI_API_KEY"]) {
-    const val = process.env[envKey];
-    const state = val === undefined ? "unset" : val.trim().length === 0 ? "empty/blank" : `${val.length} chars`;
-    console.log(`  [DIAGNOSTIC] ${envKey}: ${state}`);
-  }
 
   // v4: AI is enabled if ANY provider key is set (Groq, OpenRouter, or Gemini)
   // v4.2 BUG FIX: was checking OPENAI_API_KEY (leftover from before the

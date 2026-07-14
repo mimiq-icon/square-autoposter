@@ -1,0 +1,50 @@
+name: Trend Scan
+
+# Scans Binance Square's homepage feed for trending coins, then posts about
+# what's actually trending. Uses the binance-square-cli tool (read-only
+# scraper) to fetch the feed, then posts via the official OpenAPI.
+#
+# ⚠️ ToS RISK: This scrapes Binance Square. It's read-only (no login, no
+# credentials), but unofficial. Risk is bounded to GitHub Actions' IP range.
+# If the scraper gets blocked, this workflow fails gracefully — your normal
+# daily posting (via official OpenAPI) is unaffected.
+
+on:
+  schedule:
+    # 12:00 UTC daily = 14:00 Harare (CAT, UTC+2)
+    # Midday slot — catches what's trending after the morning post (08:30 UTC)
+    - cron: '0 12 * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (print what would be posted, do not post)'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  trend-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 'lts/*'
+
+      - name: Install binance-square-cli
+        run: |
+          git clone --depth 1 https://github.com/QuantProcessing/binance-square-cli.git /tmp/bsq
+          cd /tmp/bsq
+          npm install
+          npm run build
+
+      - name: Run trend scan
+        env:
+          SCAN_MODE: trend
+          BINANCE_SQUARE_OPENAPI_KEY: ${{ secrets.BINANCE_SQUARE_OPENAPI_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          DRY_RUN: ${{ github.event.inputs.dry_run == 'true' }}
+        run: node scan.mjs

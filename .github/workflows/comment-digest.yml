@@ -1,0 +1,86 @@
+name: Comment Digest
+
+# Fetches comments on YOUR recent Binance Square posts and opens a GitHub Issue
+# with the comments + AI-suggested replies. The AI DRAFTS replies but does NOT
+# post them — you review the Issue, then reply manually from your phone.
+#
+# This is the human-in-the-loop pattern: the AI does the reading and drafting,
+# you do the actual replying. Auto-replying = ban risk (bot pattern).
+# Manual replying = genuine engagement (builds community).
+#
+# REQUIRES: SQUARE_CREATOR_ID secret — find it in your Binance Square profile URL.
+# Go to your Square profile, copy the number in the URL (e.g. binance.com/square/123456789).
+
+on:
+  schedule:
+    # 16:00 UTC daily = 18:00 Harare (CAT, UTC+2)
+    # Afternoon — catches comments that came in during the day
+    - cron: '0 16 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  issues: write
+
+jobs:
+  comment-digest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 'lts/*'
+
+      - name: Install binance-square-cli
+        run: |
+          git clone --depth 1 https://github.com/QuantProcessing/binance-square-cli.git /tmp/bsq
+          cd /tmp/bsq
+          npm install
+          npm run build
+
+      - name: Run comment digest
+        id: scan
+        env:
+          SCAN_MODE: comments
+          SQUARE_CREATOR_ID: ${{ secrets.SQUARE_CREATOR_ID }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: |
+          OUTPUT=$(node scan.mjs)
+          echo "$OUTPUT"
+          # Check if there's an issue body to post
+          if echo "$OUTPUT" | grep -q "---ISSUE_BODY_START---"; then
+            ISSUE_BODY=$(echo "$OUTPUT" | sed -n '/---ISSUE_BODY_START---/,/---ISSUE_BODY_END---/p' | sed '1d;$d')
+            {
+              echo "has_body=true"
+              echo "issue_body<<EOF"
+              echo "$ISSUE_BODY"
+              echo "EOF"
+            } >> "$GITHUB_ENV"
+          else
+            echo "has_body=false" >> "$GITHUB_ENV"
+          fi
+
+      - name: Open GitHub Issue with comments
+        if: env.has_body == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const today = new Date().toISOString().slice(0, 10);
+            const label = 'comment-digest';
+            try {
+              await github.rest.issues.createLabel({
+                owner: context.repo.owner, repo: context.repo.repo,
+                name: label, color: '0E8A16',
+                description: 'Daily comment digest with suggested replies',
+              });
+            } catch (e) { core.info('Label exists.'); }
+            const { data: issue } = await github.rest.issues.create({
+              owner: context.repo.owner, repo: context.repo.repo,
+              title: `💬 Comment Digest — ${today}`,
+              labels: [label],
+              body: process.env.issue_body,
+            });
+            core.info(`Filed #${issue.number}.`);

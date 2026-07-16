@@ -47,12 +47,31 @@ jobs:
       - name: Fetch the draft issue's current body
         id: fetch
         uses: actions/github-script@v7
+        # v9.4 FIX: issue_number used to be spliced straight into the script
+        # source via ${{ github.event.inputs.issue_number }} — a template
+        # expansion, not a variable read. Anyone able to trigger
+        # workflow_dispatch (repo write access) could put something like
+        # `1); require('child_process').execSync(...)//` in that field and
+        # have it run as JS inside this github-script step, with this job's
+        # GITHUB_TOKEN (issues: write) available to it. Passing it through
+        # `env:` instead means GitHub substitutes the value as a plain
+        # environment variable string, never as source text the script
+        # interpreter parses — the standard fix for this class of Actions
+        # injection (see GitHub's "understanding the risk of script
+        # injection" hardening doc).
+        env:
+          ISSUE_NUMBER_INPUT: ${{ github.event.inputs.issue_number }}
         with:
           script: |
             const fs = require('fs');
             const issueNumber = context.eventName === 'workflow_dispatch'
-              ? parseInt('${{ github.event.inputs.issue_number }}', 10)
+              ? parseInt(process.env.ISSUE_NUMBER_INPUT, 10)
               : context.payload.issue.number;
+
+            if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
+              core.setFailed(`Invalid issue number: "${process.env.ISSUE_NUMBER_INPUT}". Provide a positive integer issue number.`);
+              return;
+            }
 
             const { data: issue } = await github.rest.issues.get({
               owner: context.repo.owner,
@@ -63,6 +82,20 @@ jobs:
             const labelNames = issue.labels.map((l) => (typeof l === 'string' ? l : l.name));
             if (!labelNames.includes('weekly-article-draft')) {
               core.setFailed(`Issue #${issueNumber} isn't a weekly-article-draft issue — refusing to publish it. This guard exists so adding "approved-for-posting" to some unrelated issue can't accidentally trigger a post.`);
+              return;
+            }
+
+            // v9.4 FIX: nothing previously stopped this workflow from firing
+            // twice for the same article. The "labeled" trigger fires even
+            // on a closed issue, and closed issues can still have labels
+            // added — so removing + re-adding "approved-for-posting" (or a
+            // stray automation doing it) after this issue was already
+            // published would silently post a second, duplicate article to
+            // Binance Square with a new post ID. postArticleToSquare() has
+            // no dedup of its own, so this guard is the only thing that can
+            // catch it before the network call happens.
+            if (labelNames.includes('published')) {
+              core.setFailed(`Issue #${issueNumber} already has the "published" label — refusing to publish it again. If you specifically intend to re-post, remove the "published" label first, then re-add "approved-for-posting".`);
               return;
             }
 
@@ -86,11 +119,18 @@ jobs:
       - name: Close the issue and link the live post
         if: success()
         uses: actions/github-script@v7
+        # v9.4: same fix as the "Fetch" step above — read via env instead of
+        # splicing the prior step's output into the script source. This
+        # value is our own validated integer output, so the risk here was
+        # lower, but keeping every step consistent means no future edit can
+        # reintroduce the injection-prone pattern by copy-paste.
+        env:
+          ISSUE_NUMBER: ${{ steps.fetch.outputs.issue_number }}
         with:
           script: |
             const fs = require('fs');
             const result = JSON.parse(fs.readFileSync('publish-result.json', 'utf8'));
-            const issueNumber = ${{ steps.fetch.outputs.issue_number }};
+            const issueNumber = parseInt(process.env.ISSUE_NUMBER, 10);
 
             const link = result.id
               ? `https://www.binance.com/square/post/${result.id}`

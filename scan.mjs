@@ -269,6 +269,14 @@ async function competitorScan() {
     // shows both without dumping the full profile payload.
     console.log(`  [DIAGNOSTIC] profile.data keys: ${Object.keys(userInfo).join(", ") || "(none)"}`);
     console.log(`  [DIAGNOSTIC] resolved squareUid: "${squareUid}"`);
+    // v9.4 DIAGNOSTIC: Creator 2 resolved a clean, correctly-formatted
+    // squareUid and STILL got zero posts -- rules out the "malformed ID"
+    // theory. Before guessing a 4th explanation, check the one thing not yet
+    // checked: does the profile itself even claim this account has posts?
+    // And is binanceUid (a separate field, also present) actually what
+    // user-posts wants instead of squareUid?
+    console.log(`  [DIAGNOSTIC] totalListedPostCount (from profile): ${userInfo.totalListedPostCount}`);
+    console.log(`  [DIAGNOSTIC] binanceUid: "${userInfo.binanceUid}"`);
 
     // Fetch their recent posts (up to 10 for deeper analysis)
     const postsResp = runBsq(`user-posts ${squareUid}`);

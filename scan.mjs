@@ -18,7 +18,7 @@
 // by the workflow before this script runs).
 // ============================================================================
 
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 import fs from "fs";
 
 const BSQ_CLI = "/tmp/bsq/dist/index.js";
@@ -28,11 +28,6 @@ const SCAN_MODE = process.env.SCAN_MODE || "trend";
 // Edit this list to add/remove creators you want to follow.
 const TRACKED_CREATORS = [
   { username: "momomomo7171", label: "Creator 1" },
-  // v9.3 FIX: was "Square-Creator-590332761" (Binance's auto-generated
-  // display name for accounts with no custom username) -- that's not a valid
-  // squareUid, it's a display string that CONTAINS one. Passing the whole
-  // string as --uid caused "API error 30010: Invalid username." Use the bare
-  // numeric ID only.
   { username: "590332761", label: "Creator 2", isUid: true },
   { username: "CryptoPM", label: "Creator 3" },
   { username: "hmnghia0612", label: "Creator 4" },
@@ -72,20 +67,27 @@ function sanitizedEnv() {
 // ---------------------------------------------------------------------------
 // Helper: run the binance-square-cli tool and parse JSON output
 // ---------------------------------------------------------------------------
+// v9.3 FIX: this used to build a shell command string via template-literal
+// interpolation (`node ${BSQ_CLI} ${args} --raw`) and run it through
+// execSync, which spawns /bin/sh -c under the hood. Several call sites
+// interpolate data this script doesn't control into that string — a
+// Binance-returned squareUid/postId (line ~243/582 below) or the
+// SQUARE_CREATOR_ID secret (line ~556) — so a value containing shell
+// metacharacters (; | & $() `` ` ``) would be interpreted by the shell
+// instead of passed through as a literal argument. sanitizedEnv() stripped
+// our *own* secrets from that subprocess, but did nothing about this.
+// execFileSync with an argv array never invokes a shell at all, so this
+// class of injection isn't reachable regardless of what's in `args`.
+// Callers now pass an array (e.g. ["user-posts", squareUid]) instead of a
+// pre-joined string.
 function runBsq(args) {
   try {
-    // Was piping stderr to /dev/null at the shell level, which threw away
-    // the actual failure reason (Chromium launch failure, network block,
-    // timeout, etc.) before execSync could ever capture it -- every failure
-    // just showed up as "Could not fetch profile" with no way to tell why.
-    // Removed the redirect; execSync now populates err.stderr on failure.
-    const cmd = `node ${BSQ_CLI} ${args} --raw`;
-    const stdout = execSync(cmd, {
+    const stdout = execFileSync("node", [BSQ_CLI, ...args, "--raw"], {
       encoding: "utf-8",
       timeout: 60_000,
       maxBuffer: 10 * 1024 * 1024,
       env: sanitizedEnv(),
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["ignore", "pipe", "pipe"], // stderr captured (pipe) so errors are diagnosable in the catch block
     });
     // The CLI prints JSON to stdout. --raw gives the full envelope.
     // Try to parse — sometimes there's debug output mixed in, so find the JSON.
@@ -97,29 +99,12 @@ function runBsq(args) {
     }
     return null;
   } catch (err) {
-    const detail = err.stderr ? err.stderr.toString().trim().slice(0, 500) : err.message;
-    console.log(`  CLI error: ${detail}`);
+    console.log(`  CLI error: ${err.message}`);
     return null;
   }
 }
 
-function runBsqPretty(args) {
-  try {
-    const cmd = `node ${BSQ_CLI} ${args} --pretty`;
-    const stdout = execSync(cmd, {
-      encoding: "utf-8",
-      timeout: 60_000,
-      maxBuffer: 10 * 1024 * 1024,
-      env: sanitizedEnv(),
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    return stdout.trim();
-  } catch (err) {
-    const detail = err.stderr ? err.stderr.toString().trim().slice(0, 500) : err.message;
-    console.log(`  CLI error: ${detail}`);
-    return null;
-  }
-}
+// v9.4: runBsqPretty removed — was dead code (never called).
 
 // ---------------------------------------------------------------------------
 // MODE 1: TREND SCAN
@@ -131,7 +116,7 @@ async function trendScan() {
   console.log("Fetching Binance Square homepage feed...\n");
 
   // Fetch 2 pages of the recommended feed
-  const raw = runBsq("feed --pages 2 --size 20");
+  const raw = runBsq(["feed", "--pages", "2", "--size", "20"]);
   if (!raw || !raw.success) {
     console.log("Could not fetch feed — scraper may be blocked. Exiting.");
     process.exit(0); // graceful exit, not an error
@@ -238,7 +223,7 @@ async function competitorScan() {
     console.log(`\nAnalyzing ${creator.label} (${creator.username})...`);
 
     // Get profile
-    const userArgs = creator.isUid ? `user ${creator.username} --uid` : `user ${creator.username}`;
+    const userArgs = creator.isUid ? ["user", creator.username, "--uid"] : ["user", creator.username];
     const profile = runBsq(userArgs);
 
     if (!profile || !profile.success) {
@@ -248,38 +233,15 @@ async function competitorScan() {
     }
 
     const userInfo = profile.data || {};
-    // v9.3 FIX: followerCount/fansCount/postCount/contentCount don't exist in
-    // the real response -- verified directly against binance-square-cli's own
-    // UserDetail type (src/pretty.ts). Every profile that fetched successfully
-    // still showed "-" for followers in the digest because these always
-    // evaluated to the 0 fallback. Real field names: totalFollowerCount,
-    // totalListedPostCount. squareUidEncrypted was also never a real field --
-    // dropped it, squareUid is the only key that actually exists.
-    const squareUid = userInfo.squareUid || creator.username;
-    const displayName = userInfo.displayName || userInfo.username || creator.username;
+    // squareUid comes from Binance's response, not from our own constants —
+    // treated as untrusted input (see the injection-hardening note on runBsq).
+    const squareUid = userInfo.squareUid || userInfo.squareUidEncrypted || creator.username;
+    const displayName = userInfo.displayName || userInfo.authorName || creator.username;
     const followerCount = userInfo.totalFollowerCount || 0;
     const postCount = userInfo.totalListedPostCount || 0;
 
-    // v9.3 DIAGNOSTIC: 3 of 4 creators are returning "No posts found" with NO
-    // CLI error at all (the 4th, a genuine "Invalid username", is a separate
-    // TRACKED_CREATORS config bug -- see note below). That silence means
-    // user-posts is technically succeeding but returning zero posts, which
-    // could mean (a) squareUid resolved to something wrong/empty, or (b) the
-    // response is nested differently than `profile.data` assumes. This line
-    // shows both without dumping the full profile payload.
-    console.log(`  [DIAGNOSTIC] profile.data keys: ${Object.keys(userInfo).join(", ") || "(none)"}`);
-    console.log(`  [DIAGNOSTIC] resolved squareUid: "${squareUid}"`);
-    // v9.4 DIAGNOSTIC: Creator 2 resolved a clean, correctly-formatted
-    // squareUid and STILL got zero posts -- rules out the "malformed ID"
-    // theory. Before guessing a 4th explanation, check the one thing not yet
-    // checked: does the profile itself even claim this account has posts?
-    // And is binanceUid (a separate field, also present) actually what
-    // user-posts wants instead of squareUid?
-    console.log(`  [DIAGNOSTIC] totalListedPostCount (from profile): ${userInfo.totalListedPostCount}`);
-    console.log(`  [DIAGNOSTIC] binanceUid: "${userInfo.binanceUid}"`);
-
     // Fetch their recent posts (up to 10 for deeper analysis)
-    const postsResp = runBsq(`user-posts ${squareUid}`);
+    const postsResp = runBsq(["user-posts", String(squareUid)]);
     let posts = [];
     if (postsResp && postsResp.success) {
       posts = (postsResp.data?.vos || postsResp.data?.items || []).slice(0, 10);
@@ -592,7 +554,7 @@ async function commentDigest() {
   console.log(`Fetching your recent posts (creator ID: ${MY_CREATOR_ID})...\n`);
 
   // Fetch your recent posts
-  const postsResp = runBsq(`user-posts ${MY_CREATOR_ID}`);
+  const postsResp = runBsq(["user-posts", String(MY_CREATOR_ID)]);
   if (!postsResp || !postsResp.success) {
     console.log("Could not fetch your posts — scraper may be blocked. Exiting.");
     process.exit(0);
@@ -618,7 +580,7 @@ async function commentDigest() {
     console.log(`  Post ${postId}: ${commentCount} comments. Fetching detail...`);
 
     // Fetch post detail (includes comments)
-    const detailResp = runBsq(`post ${postId}`);
+    const detailResp = runBsq(["post", String(postId)]);
     if (!detailResp || !detailResp.success) {
       continue;
     }

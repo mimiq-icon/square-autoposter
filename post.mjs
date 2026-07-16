@@ -272,6 +272,16 @@ function coingeckoHeaders() {
 // now, everything else in the pipeline is unaffected either way.
 const BINANCE_TICKER_URL = "https://data-api.binance.vision/api/v3/ticker/24hr";
 
+// v9.4 FIX: getMarketData() was the only fetcher in this file with a
+// per-attempt timeout (AbortSignal.timeout(15_000)). The 5 supplementary
+// fetchers below had none — Node's fetch has no default timeout, so a
+// single hung connection to any one of them could stall indefinitely,
+// bounded only by GitHub Actions' own job timeout (default 6 hours), not by
+// anything in this script. Every fetch() below now passes this signal so a
+// stuck source degrades the same way a failing one already does: it's
+// caught, logged, and the run moves on with whatever data it has.
+const SECONDARY_FETCH_TIMEOUT_MS = 12_000;
+
 // ---------------------------------------------------------------------------
 // Phrases that turn a factual update into an implicit trading suggestion.
 // This matters more here than in typical content: the "Write to Earn" model
@@ -298,39 +308,65 @@ const BANNED_PHRASES = [
 // DATA FETCHERS
 // ===========================================================================
 
-async function getMarketData({ sparkline = false } = {}) {
+// v9.3 FIX: this is the one fetch every code path in the script depends on
+// (main() throws if it fails, and nothing catches that throw — unlike every
+// other fetcher below, which main() wraps in its own try/catch and treats
+// as optional). That made it the single point of failure directly
+// contradicting this file's own stated philosophy ("if anything fails, post
+// *something* rather than skip a day" — see header comment). A transient
+// CoinGecko 429/5xx or a stalled connection used to fail the whole day's
+// post outright. Now retried with exponential backoff (2 retries: ~1s, ~2s)
+// and a 15s per-attempt timeout so a hung connection can't stall the job
+// indefinitely either.
+async function getMarketData({ sparkline = false, retries = 2 } = {}) {
   const ids = COINS.map((c) => c.id).join(",");
   const sparklineParam = sparkline ? "&sparkline=true" : "";
   const url = `${COINGECKO_MARKETS_URL}?vs_currency=usd&ids=${ids}&price_change_percentage=24h,7d${sparklineParam}`;
-  const res = await fetch(url, { headers: coingeckoHeaders() });
-  if (!res.ok) throw new Error(`CoinGecko markets error: ${res.status}`);
-  const rows = await res.json();
 
-  const byId = {};
-  for (const row of rows) byId[row.id] = row;
+  let lastErr;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const res = await fetch(url, {
+        headers: coingeckoHeaders(),
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!res.ok) throw new Error(`CoinGecko markets error: ${res.status}`);
+      const rows = await res.json();
 
-  return COINS.map((c) => {
-    const d = byId[c.id];
-    if (!d) return null;
-    return {
-      symbol: c.symbol,
-      price: d.current_price,
-      change24h: d.price_change_percentage_24h_in_currency,
-      change7d: d.price_change_percentage_7d_in_currency,
-      sparkline7d: d.sparkline_in_7d?.price || null,
-      // v5: CoinGecko already returns these fields on every /coins/markets
-      // call — they were being fetched and thrown away. Capturing them
-      // gives the writer stage (template or AI) real extra data points to
-      // work with (volume, market cap, rank, 24h range) instead of just
-      // price + one percentage.
-      volume24h: d.total_volume,
-      marketCap: d.market_cap,
-      rank: d.market_cap_rank,
-      high24h: d.high_24h,
-      low24h: d.low_24h,
-      athChangePct: d.ath_change_percentage,
-    };
-  }).filter(Boolean);
+      const byId = {};
+      for (const row of rows) byId[row.id] = row;
+
+      return COINS.map((c) => {
+        const d = byId[c.id];
+        if (!d) return null;
+        return {
+          symbol: c.symbol,
+          price: d.current_price,
+          change24h: d.price_change_percentage_24h_in_currency,
+          change7d: d.price_change_percentage_7d_in_currency,
+          sparkline7d: d.sparkline_in_7d?.price || null,
+          // v5: CoinGecko already returns these fields on every /coins/markets
+          // call — they were being fetched and thrown away. Capturing them
+          // gives the writer stage (template or AI) real extra data points to
+          // work with (volume, market cap, rank, 24h range) instead of just
+          // price + one percentage.
+          volume24h: d.total_volume,
+          marketCap: d.market_cap,
+          rank: d.market_cap_rank,
+          high24h: d.high_24h,
+          low24h: d.low_24h,
+          athChangePct: d.ath_change_percentage,
+        };
+      }).filter(Boolean);
+    } catch (err) {
+      lastErr = err;
+      if (attempt === retries) break;
+      const delayMs = 1000 * 2 ** attempt;
+      console.log(`  getMarketData: attempt ${attempt + 1} failed (${err.message}), retrying in ${delayMs}ms...`);
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
+  }
+  throw lastErr;
 }
 
 // NEW (v2): Trending coins from CoinGecko. Returns the top searched coins,
@@ -338,7 +374,10 @@ async function getMarketData({ sparkline = false } = {}) {
 // to real, tradeable, well-known assets (not obscure micro-caps that might
 // not even be on Binance).
 async function getTrendingCoins() {
-  const res = await fetch(COINGECKO_TRENDING_URL, { headers: coingeckoHeaders() });
+  const res = await fetch(COINGECKO_TRENDING_URL, {
+    headers: coingeckoHeaders(),
+    signal: AbortSignal.timeout(SECONDARY_FETCH_TIMEOUT_MS),
+  });
   if (!res.ok) throw new Error(`CoinGecko trending error: ${res.status}`);
   const data = await res.json();
   return (data.coins || [])
@@ -355,7 +394,10 @@ async function getTrendingCoins() {
 // NEW (v2): Global market data from CoinGecko. Total market cap, 24h volume,
 // BTC/ETH dominance, and 24h market cap change.
 async function getGlobalMarket() {
-  const res = await fetch(COINGECKO_GLOBAL_URL, { headers: coingeckoHeaders() });
+  const res = await fetch(COINGECKO_GLOBAL_URL, {
+    headers: coingeckoHeaders(),
+    signal: AbortSignal.timeout(SECONDARY_FETCH_TIMEOUT_MS),
+  });
   if (!res.ok) throw new Error(`CoinGecko global error: ${res.status}`);
   const data = await res.json();
   return {
@@ -370,7 +412,9 @@ async function getGlobalMarket() {
 // NEW (v2): Fear & Greed Index from alternative.me. A single 0-100 score
 // where 0 = extreme fear, 100 = extreme greed. Free, no key, no signup.
 async function getFearGreed() {
-  const res = await fetch(FEAR_GREED_URL);
+  const res = await fetch(FEAR_GREED_URL, {
+    signal: AbortSignal.timeout(SECONDARY_FETCH_TIMEOUT_MS),
+  });
   if (!res.ok) throw new Error(`Fear & Greed error: ${res.status}`);
   const data = await res.json();
   const fng = data.data[0];
@@ -386,7 +430,9 @@ async function getFearGreed() {
 // Note: this endpoint returns ~1MB of JSON. It's the heaviest call in the
 // script but still well within GitHub Actions' execution limits.
 async function getBinanceAnomalies() {
-  const res = await fetch(BINANCE_TICKER_URL);
+  const res = await fetch(BINANCE_TICKER_URL, {
+    signal: AbortSignal.timeout(SECONDARY_FETCH_TIMEOUT_MS),
+  });
   if (!res.ok) throw new Error(`Binance ticker error: ${res.status}`);
   const all = await res.json();
   return all
@@ -410,7 +456,10 @@ async function getBinanceAnomalies() {
 // answer honestly.
 async function getBroadMarketMovers() {
   const url = `${COINGECKO_MARKETS_URL}?vs_currency=usd&order=market_cap_desc&per_page=100&page=1&price_change_percentage=24h`;
-  const res = await fetch(url, { headers: coingeckoHeaders() });
+  const res = await fetch(url, {
+    headers: coingeckoHeaders(),
+    signal: AbortSignal.timeout(SECONDARY_FETCH_TIMEOUT_MS),
+  });
   if (!res.ok) throw new Error(`CoinGecko broad-movers error: ${res.status}`);
   const rows = await res.json();
   return rows
@@ -538,6 +587,14 @@ const EDU_TIPS = [
 ];
 
 function buildEducationalPost(data, dayIndex) {
+  // v9.4 FIX: data[dayIndex % data.length] is data[NaN] -> undefined when
+  // data is empty (dayIndex % 0 is NaN), which then threw on coin.symbol
+  // below — an uncaught crash instead of the graceful per-day fallback this
+  // file's header explicitly promises ("if anything fails, post *something*
+  // rather than skip a day"). Returning null here lets main()'s existing
+  // fallback chain (template -> snapshot -> throw) do what it already does
+  // for every other template that can't be built from today's data.
+  if (!data || data.length === 0) return null;
   const tip = EDU_TIPS[dayIndex % EDU_TIPS.length];
   const coin = data[dayIndex % data.length];
   return [
@@ -637,6 +694,9 @@ function buildMarketSentimentPost(fng, data, dayIndex) {
   const isExtremeFear = fng.value <= EXTREME_FEAR_THRESHOLD;
   const isExtremeGreed = fng.value >= EXTREME_GREED_THRESHOLD;
   if (!isExtremeFear && !isExtremeGreed) return null;
+  // v9.4 FIX: same empty-data guard as buildEducationalPost — see the
+  // comment there. data[dayIndex % data.length] is unsafe when data is [].
+  if (!data || data.length === 0) return null;
 
   const context = isExtremeFear
     ? "Extreme fear often coincides with capitulation and high volatility \u2014 it's a sentiment reading, not a buy or sell signal by itself."
@@ -2268,51 +2328,6 @@ async function postToSquareWithOptionalImage(text, imageUrl) {
   return data?.id;
 }
 
-// v9.2: Standalone top-movers-digest mode. The workflow sets
-// RUN_MODE=top-movers-digest but this mode was never handled in main() —
-// it fell through to the daily pipeline and posted a near-duplicate.
-// Now it fetches broad market movers, builds the digest, and posts it
-// as a standalone piece (not part of the daily rotation).
-async function runTopMoversDigestMode() {
-  console.log("=== RUN_MODE: top-movers-digest ===");
-
-  const key = process.env.BINANCE_SQUARE_OPENAPI_KEY;
-  if (!key) {
-    throw new Error("Missing BINANCE_SQUARE_OPENAPI_KEY for top-movers-digest mode.");
-  }
-
-  console.log("Fetching top 100 coins by market cap...");
-  const broadMovers = await getBroadMarketMovers();
-  console.log(`  Fetched ${broadMovers.length} coins.`);
-
-  if (!broadMovers || broadMovers.length === 0) {
-    console.log("No broad market data — skipping digest post.");
-    return;
-  }
-
-  const text = buildTopMoversDigestPost(broadMovers);
-  if (!text) {
-    console.log("Could not build digest text — skipping post.");
-    return;
-  }
-
-  console.log(`\n--- Post preview ---`);
-  console.log(text);
-  console.log(`--------------------`);
-
-  if (isDryRun()) {
-    console.log("[DRY RUN] No post was actually published.");
-    return;
-  }
-
-  const id = await postToSquare(text);
-  if (id && id !== "dry-run-id") {
-    console.log(`\n✓ Posted! View at: https://www.binance.com/square/post/${id}`);
-  } else {
-    console.log("\n✓ Post likely succeeded, but no ID was returned.");
-  }
-}
-
 // ===========================================================================
 // MAIN — smart template selection; weekly article handled by separate modes
 // ===========================================================================
@@ -2336,19 +2351,12 @@ async function main() {
   // below. "weekly-draft" and "weekly-publish" are the two halves of the
   // human-in-the-loop weekly article flow — see the big comment above
   // runWeeklyDraftMode(). Neither of them touches the daily pipeline at all.
-  // v9.2: Added "top-movers-digest" — previously the workflow set this mode
-  // but main() never checked for it, so it fell through to the daily pipeline
-  // and posted a near-duplicate of the morning post. Now it correctly runs
-  // the standalone digest builder.
   const runMode = process.env.RUN_MODE || "daily";
   if (runMode === "weekly-draft") {
     return runWeeklyDraftMode(dayIndex);
   }
   if (runMode === "weekly-publish") {
     return runWeeklyPublishMode();
-  }
-  if (runMode === "top-movers-digest") {
-    return await runTopMoversDigestMode();
   }
 
   const key = process.env.BINANCE_SQUARE_OPENAPI_KEY;
@@ -2357,6 +2365,30 @@ async function main() {
   }
 
   const isSunday = now.getDay() === 0;
+
+  // v9.2 DIAGNOSTIC: "No AI providers configured" has now been reported twice
+  // with the person insisting the secrets are set in the repo, and the code
+  // reading GROQ_API_KEY/OPENROUTER_API_KEY/GEMINI_API_KEY has been checked
+  // line-by-line three times and is correct. That combination points away
+  // from a code bug and toward the GitHub side: either the secrets aren't
+  // actually reaching this job (e.g. saved under Codespaces/Dependabot
+  // instead of Actions, or saved as Environment secrets while this job
+  // doesn't declare `environment:`), or a value is set but empty/whitespace
+  // (e.g. a trailing newline from a mobile copy-paste). This log line tells
+  // the two cases apart WITHOUT ever printing the secret value itself:
+  //   "unset"        -> the job never received this var at all (GitHub-side
+  //                      scoping problem — wrong secrets tab, or an
+  //                      Environment secret with no `environment:` in the
+  //                      job, or a fork/PR context that strips secrets)
+  //   "empty/blank"  -> the var reached the job but has no real content
+  //                      (bad paste — re-save the secret value)
+  //   "N chars"      -> genuinely set; if this shows and AI still doesn't
+  //                      run, the bug is elsewhere and this comment is wrong
+  for (const envKey of ["GROQ_API_KEY", "OPENROUTER_API_KEY", "GEMINI_API_KEY"]) {
+    const val = process.env[envKey];
+    const state = val === undefined ? "unset" : val.trim().length === 0 ? "empty/blank" : `${val.length} chars`;
+    console.log(`  [DIAGNOSTIC] ${envKey}: ${state}`);
+  }
 
   // v4: AI is enabled if ANY provider key is set (Groq, OpenRouter, or Gemini)
   // v4.2 BUG FIX: was checking OPENAI_API_KEY (leftover from before the
@@ -2385,7 +2417,12 @@ async function main() {
   // weekly-article-publish.yml (RUN_MODE=weekly-publish) posts it only once
   // a human adds the `approved-for-posting` label. This daily workflow just
   // steps aside on Sundays so the two don't double-post.
-  if (isSunday) {
+  // v9.3 FIX: this gate used to fire for every runMode, including
+  // "top-movers-digest". That workflow runs on its own 14:00 UTC cron
+  // (independent of the weekly-article flow that owns Sundays) and was
+  // silently no-op'ing every Sunday as a result. Only the plain daily
+  // pipeline defers to the Sunday article workflows.
+  if (isSunday && runMode === "daily") {
     console.log("Sunday: the weekly article is owned by weekly-article-draft.yml / weekly-article-publish.yml now, not this workflow. Skipping today's daily post.");
     return;
   }
@@ -2402,45 +2439,60 @@ async function main() {
     : "key: none, shared 5-15/min bucket";
   console.log(`  CoinGecko markets: ${data.length} coins fetched. (${bucketNote})`);
 
-  // Gather supplementary data. Each fetch is independent and fails gracefully
-  // — if one source is down, the others still work and the script picks the
-  // best template from what's available.
+  // v9.4 FIX: These 5 supplementary sources are independent of each other and
+  // of getMarketData() above — nothing here reads another's result. They used
+  // to run one at a time, which only ever added latency (5 sequential round
+  // trips) for zero behavioral benefit, since each already fails gracefully
+  // on its own. Promise.allSettled runs them concurrently instead; a slow or
+  // failing source still can't block or fail the others, it just settles
+  // later or rejects in its own slot. Logging and fallback behavior for each
+  // source are unchanged — if one source is down, the others still work and
+  // the script picks the best template from what's available.
   let anomalies = null;
   let trending = null;
   let globalMarket = null;
   let fng = null;
   let broadMovers = null;
 
-  try {
-    anomalies = await getBinanceAnomalies();
+  const [anomaliesResult, trendingResult, globalMarketResult, fngResult, broadMoversResult] =
+    await Promise.allSettled([
+      getBinanceAnomalies(),
+      getTrendingCoins(),
+      getGlobalMarket(),
+      getFearGreed(),
+      getBroadMarketMovers(),
+    ]);
+
+  if (anomaliesResult.status === "fulfilled") {
+    anomalies = anomaliesResult.value;
     if (anomalies.length > 0) {
       console.log(`  Binance ticker: found ${anomalies.length} anomaly/anomalies (|24h| >= ${ANOMALY_THRESHOLD_PCT}%).`);
     } else {
       console.log(`  Binance ticker: nothing unusual (threshold ${ANOMALY_THRESHOLD_PCT}%).`);
     }
-  } catch (e) {
-    console.log(`  Binance ticker: skipped (${e.message}).`);
+  } else {
+    console.log(`  Binance ticker: skipped (${anomaliesResult.reason.message}).`);
   }
 
-  try {
-    trending = await getTrendingCoins();
+  if (trendingResult.status === "fulfilled") {
+    trending = trendingResult.value;
     console.log(`  CoinGecko trending: ${trending.length} top-100 coin(s).`);
-  } catch (e) {
-    console.log(`  CoinGecko trending: skipped (${e.message}).`);
+  } else {
+    console.log(`  CoinGecko trending: skipped (${trendingResult.reason.message}).`);
   }
 
-  try {
-    globalMarket = await getGlobalMarket();
+  if (globalMarketResult.status === "fulfilled") {
+    globalMarket = globalMarketResult.value;
     console.log(`  CoinGecko global: cap ${fmtMcap(globalMarket.totalMcap)}, BTC dom ${globalMarket.btcDominance.toFixed(1)}%.`);
-  } catch (e) {
-    console.log(`  CoinGecko global: skipped (${e.message}).`);
+  } else {
+    console.log(`  CoinGecko global: skipped (${globalMarketResult.reason.message}).`);
   }
 
-  try {
-    fng = await getFearGreed();
+  if (fngResult.status === "fulfilled") {
+    fng = fngResult.value;
     console.log(`  Fear & Greed: ${fng.value}/100 (${fng.classification}).`);
-  } catch (e) {
-    console.log(`  Fear & Greed: skipped (${e.message}).`);
+  } else {
+    console.log(`  Fear & Greed: skipped (${fngResult.reason.message}).`);
   }
 
   // v9: Broad market movers (top 100 by market cap) — powers the "digest"
@@ -2448,11 +2500,11 @@ async function main() {
   // other supplementary sources: if this fails, digest/spotlight just won't
   // be selectable that day (buildTemplatePost/buildAiPost both return null
   // on missing ctx.broadMovers, and main() falls back to snapshot).
-  try {
-    broadMovers = await getBroadMarketMovers();
+  if (broadMoversResult.status === "fulfilled") {
+    broadMovers = broadMoversResult.value;
     console.log(`  CoinGecko broad movers: ${broadMovers.length} of top 100 fetched.`);
-  } catch (e) {
-    console.log(`  CoinGecko broad movers: skipped (${e.message}).`);
+  } else {
+    console.log(`  CoinGecko broad movers: skipped (${broadMoversResult.reason.message}).`);
   }
 
   // ===========================================================================
@@ -2463,7 +2515,18 @@ async function main() {
   let style = null;
   const ctx = { globalMarket, fng, anomalies, trending, broadMovers };
 
-  if (anomalies && anomalies.length > 0) {
+  // v9.3 FIX: RUN_MODE=top-movers-digest was set by top-movers-digest.yml
+  // but never actually read here. Every prior run fell through to the same
+  // anomaly/sentiment/rotation logic as the plain daily pipeline — using
+  // the SAME dayIndex as that morning's 08:30 UTC post, so on any day the
+  // rotation didn't happen to land on "digest" (8 days out of 9), this
+  // workflow posted a near-duplicate of the post already published hours
+  // earlier, instead of the top-movers digest its own workflow file
+  // describes. This mode now always forces the digest template.
+  if (runMode === "top-movers-digest") {
+    style = "digest";
+    console.log(`  Decision: RUN_MODE=top-movers-digest → forcing "digest" template.`);
+  } else if (anomalies && anomalies.length > 0) {
     style = "anomaly";
     console.log(`  Decision: anomaly detected → "anomaly" template.`);
   } else if (fng && (fng.value <= EXTREME_FEAR_THRESHOLD || fng.value >= EXTREME_GREED_THRESHOLD)) {

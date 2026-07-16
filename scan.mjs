@@ -28,7 +28,12 @@ const SCAN_MODE = process.env.SCAN_MODE || "trend";
 // Edit this list to add/remove creators you want to follow.
 const TRACKED_CREATORS = [
   { username: "momomomo7171", label: "Creator 1" },
-  { username: "Square-Creator-590332761", label: "Creator 2", isUid: true },
+  // v9.3 FIX: was "Square-Creator-590332761" (Binance's auto-generated
+  // display name for accounts with no custom username) -- that's not a valid
+  // squareUid, it's a display string that CONTAINS one. Passing the whole
+  // string as --uid caused "API error 30010: Invalid username." Use the bare
+  // numeric ID only.
+  { username: "590332761", label: "Creator 2", isUid: true },
   { username: "CryptoPM", label: "Creator 3" },
   { username: "hmnghia0612", label: "Creator 4" },
 ];
@@ -243,10 +248,27 @@ async function competitorScan() {
     }
 
     const userInfo = profile.data || {};
-    const squareUid = userInfo.squareUid || userInfo.squareUidEncrypted || creator.username;
-    const displayName = userInfo.displayName || userInfo.authorName || creator.username;
-    const followerCount = userInfo.followerCount || userInfo.fansCount || 0;
-    const postCount = userInfo.postCount || userInfo.contentCount || 0;
+    // v9.3 FIX: followerCount/fansCount/postCount/contentCount don't exist in
+    // the real response -- verified directly against binance-square-cli's own
+    // UserDetail type (src/pretty.ts). Every profile that fetched successfully
+    // still showed "-" for followers in the digest because these always
+    // evaluated to the 0 fallback. Real field names: totalFollowerCount,
+    // totalListedPostCount. squareUidEncrypted was also never a real field --
+    // dropped it, squareUid is the only key that actually exists.
+    const squareUid = userInfo.squareUid || creator.username;
+    const displayName = userInfo.displayName || userInfo.username || creator.username;
+    const followerCount = userInfo.totalFollowerCount || 0;
+    const postCount = userInfo.totalListedPostCount || 0;
+
+    // v9.3 DIAGNOSTIC: 3 of 4 creators are returning "No posts found" with NO
+    // CLI error at all (the 4th, a genuine "Invalid username", is a separate
+    // TRACKED_CREATORS config bug -- see note below). That silence means
+    // user-posts is technically succeeding but returning zero posts, which
+    // could mean (a) squareUid resolved to something wrong/empty, or (b) the
+    // response is nested differently than `profile.data` assumes. This line
+    // shows both without dumping the full profile payload.
+    console.log(`  [DIAGNOSTIC] profile.data keys: ${Object.keys(userInfo).join(", ") || "(none)"}`);
+    console.log(`  [DIAGNOSTIC] resolved squareUid: "${squareUid}"`);
 
     // Fetch their recent posts (up to 10 for deeper analysis)
     const postsResp = runBsq(`user-posts ${squareUid}`);

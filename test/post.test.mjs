@@ -339,6 +339,13 @@ describe("template builders return valid, non-empty posts", () => {
     }
   });
 
+  // v9.4 regression: data[dayIndex % data.length] is data[NaN] when data is
+  // empty (dayIndex % 0 === NaN), which used to throw on coin.symbol instead
+  // of falling back gracefully like every other template.
+  test("buildEducationalPost returns null (not a throw) for empty data", () => {
+    assert.equal(buildEducationalPost([], 3), null);
+  });
+
   test("buildWeeklyRecapPost includes the 7d change, not 24h", () => {
     const text = buildWeeklyRecapPost(FIVE_COINS, 0);
     assert.match(text, /this week/);
@@ -379,6 +386,12 @@ describe("template builders return valid, non-empty posts", () => {
   test("buildMarketSentimentPost fires on extreme greed", () => {
     const text = buildMarketSentimentPost({ value: 85, classification: "Extreme Greed" }, FIVE_COINS, 0);
     assert.match(text, /Extreme Greed/);
+  });
+
+  // v9.4 regression: same empty-data crash as buildEducationalPost above,
+  // reachable here whenever fng is at an extreme AND data is empty.
+  test("buildMarketSentimentPost returns null (not a throw) for empty data at an extreme", () => {
+    assert.equal(buildMarketSentimentPost({ value: 15, classification: "Extreme Fear" }, [], 0), null);
   });
 });
 

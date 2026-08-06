@@ -24,6 +24,8 @@ import {
   coingeckoHeaders,
   countCashtags,
   findUngroundedCoinName,
+  pickHashtags,
+  appendHashtags,
   isSafeAiText,
   enforceMaxLength,
   buildSnapshotPost,
@@ -175,6 +177,45 @@ describe("countCashtags / findUngroundedCoinName", () => {
 
   test("findUngroundedCoinName returns null when no known coin names appear", () => {
     assert.equal(findUngroundedCoinName("The market moved sideways today", ["BTC"]), null);
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe("pickHashtags / appendHashtags", () => {
+  test("picks a mapped hashtag for a single grounded cashtag", () => {
+    assert.deepEqual(pickHashtags("$BTC is holding steady today. DYOR."), ["#Bitcoin"]);
+  });
+
+  test("picks hashtags in order of first appearance, deduped, capped at MAX_HASHTAGS_PER_POST", () => {
+    const text = "$ETH leads while $BTC and $ETH again both hold. $BNB lags. DYOR.";
+    assert.deepEqual(pickHashtags(text), ["#Ethereum", "#Bitcoin"]);
+  });
+
+  test("falls back to the generic hashtag for an unmapped symbol", () => {
+    assert.deepEqual(pickHashtags("$PEPE is pumping today. DYOR."), ["#Crypto"]);
+  });
+
+  test("falls back to the generic hashtag when there are no cashtags at all", () => {
+    assert.deepEqual(pickHashtags("The market moved sideways today. DYOR."), ["#Crypto"]);
+  });
+
+  test("never returns more than MAX_HASHTAGS_PER_POST tags even with many unique symbols", () => {
+    const text = "$BTC $ETH $BNB $SOL $XRP all moved today. DYOR.";
+    assert.ok(pickHashtags(text).length <= 2);
+  });
+
+  test("appendHashtags appends to the same line, not a new one", () => {
+    const result = appendHashtags("$BTC is holding steady today. Not financial advice. DYOR.");
+    assert.equal(result.split("\n").length, 1);
+    assert.match(result, /#Bitcoin$/);
+  });
+
+  test("appendHashtags is grounded in the text passed in, not a fixed default", () => {
+    const btcResult = appendHashtags("$BTC only. DYOR.");
+    const ethResult = appendHashtags("$ETH only. DYOR.");
+    assert.match(btcResult, /#Bitcoin/);
+    assert.match(ethResult, /#Ethereum/);
+    assert.doesNotMatch(btcResult, /#Ethereum/);
   });
 });
 

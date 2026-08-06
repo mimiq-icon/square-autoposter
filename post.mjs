@@ -109,6 +109,15 @@ const COINS = [
 // exceeds the allowed limit"). Keep every post at or under this number.
 const MAX_CASHTAGS_PER_POST = 3;
 
+// v9.4 NEW: Binance Square's own "why isn't my content getting reach" guidance
+// highlights hashtags as a discovery mechanism — "#topic" text is parsed
+// server-side (same mechanism as $cashtags, just a different sigil) and can
+// surface a post on that hashtag's trending page. No documented numeric cap
+// exists (unlike the cashtag limit above, which is enforced by a real error
+// code), so this is a deliberately conservative default — 2 keeps posts from
+// reading as tag-stuffed while still giving each post a shot at topic pages.
+const MAX_HASHTAGS_PER_POST = 2;
+
 // ---------------------------------------------------------------------------
 // NEW (v2): Extended watchlist for the Anomaly Radar template.
 // These are Binance-listed tickers the script scans for unusual 24h moves.
@@ -806,6 +815,60 @@ function findUngroundedCoinName(text, allowedSymbols) {
     }
   }
   return null;
+}
+
+// v9.4 NEW: topic hashtags. Per Binance's own docs, "#topic" in the body
+// text is parsed server-side exactly like a $cashtag — there's no separate
+// structured field to send, so this only has to produce good text.
+// Reuses COIN_NAMES_BY_SYMBOL above so a hashtag is only ever attached for a
+// coin the post is *already* grounded in (i.e. one whose $cashtag actually
+// appears in the text) — same "no ungrounded claims" principle the cashtag
+// and coin-name checks enforce elsewhere in this file, just applied to tags.
+const HASHTAG_BY_SYMBOL = {
+  BTC: "#Bitcoin",
+  ETH: "#Ethereum",
+  BNB: "#BNB",
+  SOL: "#Solana",
+  XRP: "#XRP",
+  ADA: "#Cardano",
+  DOGE: "#Dogecoin",
+  LINK: "#Chainlink",
+};
+
+// Generic fallback for symbols with no specific hashtag mapped above (e.g.
+// less common tickers from the anomaly/trending watchlists) and for the rare
+// case a post has no cashtags at all — still gives it a shot at general
+// discovery instead of shipping with zero hashtags.
+const GENERIC_CRYPTO_HASHTAG = "#Crypto";
+
+// Picks up to MAX_HASHTAGS_PER_POST hashtags, grounded in the $cashtags the
+// text already contains, in the order those cashtags first appear.
+function pickHashtags(text) {
+  const seen = new Set();
+  const tags = [];
+  for (const match of countCashtags(text)) {
+    const symbol = match.slice(1); // drop the "$"
+    if (seen.has(symbol)) continue;
+    seen.add(symbol);
+    tags.push(HASHTAG_BY_SYMBOL[symbol] || GENERIC_CRYPTO_HASHTAG);
+    if (tags.length >= MAX_HASHTAGS_PER_POST) break;
+  }
+  if (tags.length === 0) tags.push(GENERIC_CRYPTO_HASHTAG);
+  // De-dupe again in case two different symbols both fell back to #Crypto.
+  return [...new Set(tags)].slice(0, MAX_HASHTAGS_PER_POST);
+}
+
+// Appends hashtags to the very end of the final post text, on the same line
+// as whatever's already last (typically the DYOR disclaimer) — deliberately
+// NOT a new line, so enforceMaxLength()'s "keep the last 2 lines" trimming
+// logic (which runs after this) can't separate the hashtags from the line
+// they're attached to. This runs on the fully-resolved text (after the
+// AI-vs-template decision, after isSafeAiText validation) so it never
+// interferes with — and never has to duplicate — that validation pipeline.
+function appendHashtags(text) {
+  const hashtags = pickHashtags(text);
+  if (hashtags.length === 0) return text;
+  return `${text} ${hashtags.join(" ")}`;
 }
 
 // v5.6: Vibe adherence check. The diagnostic showed the model silently
@@ -2008,7 +2071,13 @@ function buildWeeklyArticle(data, dayIndex, ctx = {}) {
 
   // Closing
   sections.push(`---`);
-  sections.push(`*Weekly recap, not financial advice. Always DYOR.*`);
+  // v9.4: same hashtag treatment as the daily posts (see appendHashtags) —
+  // Binance's docs don't scope hashtag parsing to posts vs. articles. Ground
+  // the pick in the body-so-far (featured watchlist coins are listed first
+  // in Section 2, above, so they take priority over anomalies/trending).
+  const bodySoFar = sections.join("\n");
+  const articleHashtags = pickHashtags(bodySoFar);
+  sections.push(`*Weekly recap, not financial advice. Always DYOR.* ${articleHashtags.join(" ")}`);
 
   const body = sections.join("\n");
   return { title, body };
@@ -2585,6 +2654,11 @@ async function main() {
 
   if (!text) throw new Error("Could not build post text \u2014 check CoinGecko response.");
 
+  // v9.4: attach topic hashtags now that `text` is fully resolved (whichever
+  // path produced it). See appendHashtags() for why this happens here rather
+  // than inside each template/AI path individually.
+  text = appendHashtags(text);
+
   console.log(`\n--- Post preview (source: ${source}) ---`);
   console.log(text);
   console.log(`--------------------`);
@@ -2672,6 +2746,8 @@ export {
   coingeckoHeaders,
   countCashtags,
   findUngroundedCoinName,
+  pickHashtags,
+  appendHashtags,
   isSafeAiText,
   enforceMaxLength,
   buildSnapshotPost,

@@ -1,0 +1,95 @@
+name: Breaking News Post
+
+# v10: Watcher-Guru-style news posts. Hourly, at most ONE story per run, and
+# only if a fresh story clears the importance bar (see scoreStory in
+# news.mjs). A quiet hour posts nothing — that's intended.
+#
+# v10.1: this is now the BACKUP runner. Your PC (local-runner.mjs, see
+# PC-SETUP.md) checks every ~2.5 minutes with a local AI model; this workflow
+# keeps posting hourly whenever the PC is off. Both share news-state/posted.json
+# through git: a runner CLAIMS a story by pushing it before publishing, and git
+# rejects the second pusher, so the same story is never posted twice.
+# post.mjs does that pushing itself (NEWS_GIT_SYNC), which is why there is no
+# separate "save state" step any more and why this workflow needs
+# `contents: write`.
+#
+# Cost: ~1 Actions minute per run. Hourly = ~720 min/month, fine for public
+# repos (free) and inside the 2,000 free minutes for private ones, but if you
+# run many other workflows on a private repo, watch your usage.
+
+on:
+  schedule:
+    # Minute 12 of every hour (avoids the busy :00 mark when GitHub delays crons).
+    - cron: '12 * * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (print the chosen story + post, publish nothing, save no state)'
+        required: false
+        type: boolean
+        default: true
+      min_score:
+        description: 'Override minimum importance score (default 35). Lower = more posts.'
+        required: false
+        type: string
+        default: ''
+
+# Two overlapping runs of THIS workflow queue instead of cancelling. (Races with
+# your PC are handled by the git claim lock, not by this.)
+concurrency:
+  group: news-post
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  news:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0   # the claim lock builds commits on the remote tip
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 'lts/*'
+
+      - name: Find and post the top news story
+        env:
+          RUN_MODE: news
+          NEWS_GIT_SYNC: 'true'   # claim stories through git so the PC and this runner never double-post
+          BINANCE_SQUARE_OPENAPI_KEY: ${{ secrets.BINANCE_SQUARE_OPENAPI_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+
+          # Scheduled runs are always live; manual runs default to dry-run.
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'true' }}
+          NEWS_MIN_SCORE: ${{ github.event.inputs.min_score }}
+
+          # --- Optional tuning (uncomment to change) ---
+          # NEWS_MIN_GAP_MIN: '5'         # minimum minutes between posts, shared with the PC
+          #
+          # Human approval over Telegram. By default the PC owns approvals; if
+          # you add these here too, sensitive stories on this runner also ask you
+          # first (it then waits up to NEWS_APPROVAL_WAIT_MIN, using Actions minutes).
+          # Without them, sensitive stories still need 2 outlets before posting.
+          # TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          # TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          # NEWS_MAX_PER_DAY: '12'        # hard daily cap
+          # NEWS_MAX_AGE_HOURS: '6'       # ignore stories older than this
+          # NEWS_REQUIRE_AI: 'true'       # skip a story rather than post the plain-headline fallback
+          # NEWS_EXTRA_FEEDS: 'Name|https://example.com/rss,Name2|https://other.com/feed'
+          #
+          # Cross-post news to X too. Off by default: X bills per post, and
+          # this can be up to 12 posts a day. Needs the 4 TWITTER_* secrets.
+          # NEWS_CROSSPOST_X: 'true'
+          # TWITTER_API_KEY: ${{ secrets.TWITTER_API_KEY }}
+          # TWITTER_API_SECRET: ${{ secrets.TWITTER_API_SECRET }}
+          # TWITTER_ACCESS_TOKEN: ${{ secrets.TWITTER_ACCESS_TOKEN }}
+          # TWITTER_ACCESS_TOKEN_SECRET: ${{ secrets.TWITTER_ACCESS_TOKEN_SECRET }}
+        run: node post.mjs

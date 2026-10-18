@@ -1,7 +1,7 @@
 name: Tests
 
 # v9.3: The project has had a real, growing unit-test suite (test/post.test.mjs,
-# 69 tests as of this pass) since v7, but nothing ever ran it automatically —
+# 171 tests as of v10.1) since v7, but nothing ever ran it automatically —
 # it only ran if someone remembered `node --test` locally before pushing. This
 # closes that gap: every push and pull request that touches the source or the
 # tests runs the full suite. Tests are pure/no-network (see the header comment
@@ -12,12 +12,22 @@ on:
     paths:
       - 'post.mjs'
       - 'scan.mjs'
+      - 'news.mjs'
+      - 'news-sync.mjs'
+      - 'telegram.mjs'
+      - 'local-runner.mjs'
+      - 'test-support/**'
       - 'test/**'
       - '.github/workflows/test.yml'
   pull_request:
     paths:
       - 'post.mjs'
       - 'scan.mjs'
+      - 'news.mjs'
+      - 'news-sync.mjs'
+      - 'telegram.mjs'
+      - 'local-runner.mjs'
+      - 'test-support/**'
       - 'test/**'
       - '.github/workflows/test.yml'
   workflow_dispatch: {}

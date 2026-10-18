@@ -1,0 +1,11 @@
+# Secrets — never commit these
+.env
+.env.*
+!.env.example
+
+# Runner output
+logs/
+.cache/
+
+node_modules/
+*.log

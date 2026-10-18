@@ -89,6 +89,15 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import crypto from "crypto";
+import { pathToFileURL } from "url";
+import {
+  NEWS_FEEDS, parseExtraFeeds, parseFeed, normalizeNewsState, pruneNewsState, dailyCount,
+  recordClaim, setEntryStatus, removeClaim, gapBlock, resolveApprovalMode,
+  pickNewsStory, buildNewsPrompt, parseNewsAiOutput, validateNewsCopy,
+  buildNewsTemplate, assembleNewsPost, detectCoins,
+} from "./news.mjs";
+import { telegramConfigured, buildApprovalMessage, requestApproval, storyId } from "./telegram.mjs";
+import { gitAvailable, pullState, commitPush } from "./news-sync.mjs";
 
 // ---------------------------------------------------------------------------
 // Core watchlist — the 5 coins used by snapshot/mover/educational/weekly
@@ -229,7 +238,33 @@ const AI_PROVIDERS = [
     model: GEMINI_MODEL,
     callFn: (prompt, key, model) => callGemini(prompt, key, model),
   },
+  // v10.1: a model running on your own machine via Ollama (or LM Studio — any
+  // server speaking the OpenAI chat format). "API" here just means "talk to a
+  // program over localhost": no internet, no key, no cost. Enabled by setting
+  // OLLAMA_MODEL (e.g. "qwen2.5:3b"). Slow on CPU, so it gets a long timeout.
+  // Last in the default order, so the free cloud models are preferred when
+  // present; set AI_PROVIDER_ORDER=ollama,groq to prefer the local one.
+  {
+    name: "ollama",
+    envKey: "OLLAMA_MODEL",
+    model: process.env.OLLAMA_MODEL,
+    callFn: (prompt, key, model) =>
+      callOpenAICompatible(prompt, "ollama", model, process.env.OLLAMA_BASE_URL || "http://localhost:11434/v1", 240_000),
+  },
 ];
+
+// v10.1: AI_PROVIDER_ORDER="ollama,groq" overrides the order; providers not
+// named keep their default order after the named ones.
+function orderedProviders() {
+  const wanted = (process.env.AI_PROVIDER_ORDER || "").split(",").map((x) => x.trim().toLowerCase()).filter(Boolean);
+  if (!wanted.length) return AI_PROVIDERS;
+  const named = wanted.map((n) => AI_PROVIDERS.find((p) => p.name === n)).filter(Boolean);
+  return [...named, ...AI_PROVIDERS.filter((p) => !named.includes(p))];
+}
+
+function hasAnyAiProvider() {
+  return AI_PROVIDERS.some((p) => Boolean(process.env[p.envKey]));
+}
 
 // Free, no-key chart rendering service (quickchart.io).
 const QUICKCHART_ENDPOINT = "https://quickchart.io/chart";
@@ -1182,7 +1217,7 @@ async function callGemini(prompt, key, model) {
 // v4 NEW: OpenAI-compatible API caller. Works for both Groq and OpenAI
 // (they use the same chat completions format, just different base URLs).
 // Throws on any error so the caller can catch and fall back to next provider.
-async function callOpenAICompatible(prompt, key, model, baseUrl) {
+async function callOpenAICompatible(prompt, key, model, baseUrl, timeoutMs = 60_000) {
   if (!key) return null;
 
   const res = await fetch(`${baseUrl}/chat/completions`, {
@@ -1198,6 +1233,9 @@ async function callOpenAICompatible(prompt, key, model, baseUrl) {
       temperature: 0.4,
       top_p: 0.9,
     }),
+    // A hung provider must not stall the run forever (local CPU models get a
+    // longer limit from their caller).
+    signal: AbortSignal.timeout(timeoutMs),
   });
 
   if (!res.ok) {
@@ -1216,7 +1254,11 @@ async function callOpenAICompatible(prompt, key, model, baseUrl) {
     throw new Error(`${model} finish_reason: ${finishReason}`);
   }
 
-  return choice.message?.content || null;
+  // Reasoning models (e.g. Qwen3, DeepSeek-R1 via Ollama) put their thinking
+  // in <think>...</think> before the answer. Strip it so only the answer is
+  // validated and published.
+  const content = (choice.message?.content || "").replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+  return content || null;
 }
 
 // v4.4: Try each AI provider in order. Returns { text, provider } on
@@ -1235,7 +1277,7 @@ async function callOpenAICompatible(prompt, key, model, baseUrl) {
 // phrases, filler, length, missing DYOR) skip the retry and move directly
 // to the next provider.
 async function callAiWithFallback(prompt, allowedSymbols, vibeName) {
-  for (const provider of AI_PROVIDERS) {
+  for (const provider of orderedProviders()) {
     const key = process.env[provider.envKey];
     if (!key) {
       console.log(`  ${provider.name}: no API key set, skipping.`);
@@ -1618,7 +1660,11 @@ async function buildAiPost(data, dayIndex, style, ctx = {}) {
   // v5.6: Pass vibe.name so isSafeAiText can check vibe adherence.
   const result = await callAiWithFallback(prompt, allowedSymbols, vibe.name);
   if (result) {
-    return result.text;  // main() will use this as the post text
+    // v9.5: used to just `return result.text`, discarding which provider
+    // succeeded. main() needs that for the job summary (see
+    // writeJobSummary), so now the whole { text, provider } shape passes
+    // through. Not exported/unit-tested, so this is a safe shape change.
+    return result;
   }
   return null;  // all providers failed — main() falls back to template
 }
@@ -2398,6 +2444,424 @@ async function postToSquareWithOptionalImage(text, imageUrl) {
 }
 
 // ===========================================================================
+// v10 NEW: BREAKING-NEWS MODE (RUN_MODE=news)
+// ---------------------------------------------------------------------------
+// The market-data templates can't compete with a news account, because news
+// is what people follow. This mode reads crypto RSS feeds, picks the single
+// most important fresh story (confirmed by several outlets > one, high-impact
+// keywords > quiet ones), rewrites it as a short wire-style post, attributes
+// the source, and posts at most ONE story per run. If nothing clears the
+// importance bar it posts nothing — quality over volume.
+//
+// Safety model: feed text is untrusted and an LLM can invent facts, so the AI
+// only proposes a HEADLINE + CONTEXT line, and validateNewsCopy() (news.mjs)
+// rejects any number/unit/name/coin that isn't in the source story. Failing
+// that, the post uses the cleaned original headline + attribution.
+//
+// State: the runner is stateless, so already-posted stories live in
+// news-state/posted.json, committed back by news-post.yml. Dry runs never
+// write it.
+//
+// Env: NEWS_MIN_SCORE (35), NEWS_MAX_AGE_HOURS (6), NEWS_MAX_PER_DAY (12),
+//      NEWS_STATE_FILE, NEWS_EXTRA_FEEDS ("Name|https://url,..."),
+//      NEWS_REQUIRE_AI (true = skip the story instead of using the template
+//      fallback), NEWS_CROSSPOST_X (true = also post to X).
+// ===========================================================================
+const NEWS_FETCH_TIMEOUT_MS = 15_000;
+
+// Fetches one feed. With a cache object, sends If-None-Match/If-Modified-Since
+// so a 2-minute poll doesn't re-download unchanged feeds (polite to publishers,
+// and a 304 is fast). Items are filtered/tagged BEFORE caching.
+async function fetchNewsFeed(feed, cache) {
+  const headers = {
+    "User-Agent": "Mozilla/5.0 (compatible; square-autoposter/10; +https://github.com)",
+    Accept: "application/rss+xml, application/atom+xml, application/xml, text/xml, */*",
+  };
+  const prev = cache && cache[feed.url];
+  if (prev?.etag) headers["If-None-Match"] = prev.etag;
+  if (prev?.lastModified) headers["If-Modified-Since"] = prev.lastModified;
+
+  const res = await fetch(feed.url, { headers, signal: AbortSignal.timeout(NEWS_FETCH_TIMEOUT_MS) });
+  if (res.status === 304 && prev?.items) return prev.items;
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+  let items = parseFeed(await res.text(), feed.name);
+  if (feed.filter) items = items.filter((i) => feed.filter.test(`${i.title} ${i.summary}`));
+  if (feed.official) items = items.map((i) => ({ ...i, official: true }));
+  if (cache) {
+    cache[feed.url] = {
+      etag: res.headers.get("etag") || undefined,
+      lastModified: res.headers.get("last-modified") || undefined,
+      items,
+    };
+  }
+  return items;
+}
+
+async function fetchAllNews() {
+  const feeds = [...NEWS_FEEDS, ...parseExtraFeeds(process.env.NEWS_EXTRA_FEEDS)];
+  const cacheFile = process.env.NEWS_FEED_CACHE_FILE;
+  let cache = null;
+  if (cacheFile) {
+    try { cache = JSON.parse(fs.readFileSync(cacheFile, "utf8")); } catch { cache = {}; }
+  }
+  const settled = await Promise.allSettled(feeds.map((f) => fetchNewsFeed(f, cache)));
+  const items = [];
+  const health = [];
+  settled.forEach((r, i) => {
+    if (r.status === "fulfilled") {
+      console.log(`  ${feeds[i].name}: ${r.value.length} items`);
+      health.push({ name: feeds[i].name, ok: true, count: r.value.length });
+      items.push(...r.value);
+    } else {
+      console.log(`  ${feeds[i].name}: FAILED (${r.reason?.message || r.reason})`);
+      health.push({ name: feeds[i].name, ok: false, error: String(r.reason?.message || r.reason) });
+    }
+  });
+  if (cacheFile && cache) {
+    try {
+      fs.mkdirSync(path.dirname(cacheFile), { recursive: true });
+      fs.writeFileSync(cacheFile, JSON.stringify(cache));
+    } catch { /* cache is an optimisation only */ }
+  }
+  return { items, health };
+}
+
+function loadNewsStateFile(file) {
+  try {
+    return normalizeNewsState(JSON.parse(fs.readFileSync(file, "utf8")));
+  } catch {
+    return normalizeNewsState(null); // missing/corrupt state = start fresh, never crash
+  }
+}
+
+function saveNewsStateFile(file, state) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(state, null, 2) + "\n");
+}
+
+// Same provider chain as the daily post, but with the news validator instead
+// of isSafeAiText (which is tuned for market posts: DYOR line, vibes, etc.).
+async function callAiForNews(prompt, srcText) {
+  const banned = BANNED_PHRASES.map((p) => p.toLowerCase());
+  for (const provider of orderedProviders()) {
+    const key = process.env[provider.envKey];
+    if (!key) continue;
+    console.log(`  Trying ${provider.name} (${provider.model})...`);
+    let currentPrompt = prompt;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      let raw;
+      try {
+        raw = await provider.callFn(currentPrompt, key, provider.model);
+      } catch (err) {
+        console.log(`  ${provider.name}: ${err.message}`);
+        break; // network/rate-limit/timeout: next provider
+      }
+      const copy = parseNewsAiOutput(raw);
+      const verdict = copy
+        ? validateNewsCopy(copy, srcText, banned)
+        : { ok: false, reason: "output did not follow the HEADLINE:/CONTEXT: format" };
+      if (verdict.ok) {
+        console.log(`  ${provider.name}: SUCCESS${attempt ? " on retry" : ""} (validated).`);
+        return { copy, provider: provider.name };
+      }
+      console.log(`  ${provider.name}: rejected — ${verdict.reason}`);
+      currentPrompt = `${prompt}\n\nYour previous answer was rejected because: ${verdict.reason}.\nPrevious answer:\n${raw}\nWrite a corrected answer in the same two-line format.`;
+    }
+  }
+  return null;
+}
+
+function writeNewsSummary({ outcome, story, score, reasons, provider, text, id, dryRun, health, ranked, note }) {
+  const f = process.env.GITHUB_STEP_SUMMARY;
+  if (!f) return;
+  const lines = [`### News run — ${outcome}`, ""];
+  if (note) lines.push(note, "");
+  if (story) {
+    lines.push(
+      `**Story:** ${story.primary.title}`,
+      `**Outlets:** ${story.sources.join(", ")} · **Score:** ${score} (${(reasons || []).join("; ")})`,
+      `**Written by:** ${provider ? `AI (${provider})` : "template fallback"} · **Dry run:** ${dryRun ? "yes" : "no"}`,
+      id && id !== "dry-run-id" ? `**Post:** [View](https://www.binance.com/square/post/${id})` : "",
+      "", "```", text || "", "```", ""
+    );
+  }
+  if (health) {
+    lines.push("| Feed | Status |", "|---|---|", ...health.map((h) => `| ${h.name} | ${h.ok ? `ok (${h.count})` : `FAILED: ${h.error}`} |`), "");
+  }
+  if (ranked && ranked.length) {
+    lines.push("Top candidates:", "", "| Score | State | Headline |", "|---|---|---|",
+      ...ranked.slice(0, 5).map((r) => `| ${r.score} | ${r.posted ? "already posted" : r.decision?.action || ""} | ${r.cluster.primary.title.replace(/\|/g, "/")} |`), "");
+  }
+  try {
+    fs.appendFileSync(f, lines.join("\n"));
+  } catch (err) {
+    console.log(`  Could not write news summary (${err.message}) — non-fatal.`);
+  }
+}
+
+async function runNewsMode() {
+  const dry = isDryRun();
+  const envNum = (name, dflt) => (process.env[name] !== undefined && process.env[name] !== "" && Number.isFinite(Number(process.env[name])) ? Number(process.env[name]) : dflt);
+  const cfg = {
+    stateFile: process.env.NEWS_STATE_FILE || "news-state/posted.json",
+    minScore: envNum("NEWS_MIN_SCORE", 35) || 35,
+    maxAgeHours: envNum("NEWS_MAX_AGE_HOURS", 6) || 6,
+    maxPerDay: envNum("NEWS_MAX_PER_DAY", 12) || 12,
+    minGapMin: envNum("NEWS_MIN_GAP_MIN", 5),            // 0 disables the gap
+    approvalWaitMin: envNum("NEWS_APPROVAL_WAIT_MIN", 8) || 8,
+  };
+  const gitSync = String(process.env.NEWS_GIT_SYNC).toLowerCase() === "true";
+  const cwd = process.cwd();
+  const tgOn = telegramConfigured();
+  const approvalMode = resolveApprovalMode(process.env.NEWS_APPROVAL, tgOn);
+  const gitIdentity = { name: process.env.NEWS_GIT_NAME || "square-autoposter-bot", email: process.env.NEWS_GIT_EMAIL || "bot@users.noreply.github.com" };
+
+  console.log(`\n=== NEWS MODE (minScore ${cfg.minScore}, max age ${cfg.maxAgeHours}h, cap ${cfg.maxPerDay}/day, gap ${cfg.minGapMin}min, approval ${approvalMode}${gitSync ? ", git-sync" : ""}${dry ? ", DRY RUN" : ""}) ===`);
+  if (!dry && !process.env.BINANCE_SQUARE_OPENAPI_KEY) {
+    throw new Error("Missing BINANCE_SQUARE_OPENAPI_KEY environment variable.");
+  }
+
+  // ---- shared-state helpers (git is the lock between machines) ----
+  let baseTip = null;
+  if (gitSync) {
+    if (!gitAvailable(cwd)) {
+      throw new Error("NEWS_GIT_SYNC=true but this folder is not a git clone with an 'origin' remote. Clone the repo, or set NEWS_GIT_SYNC=false (and accept that two machines could then duplicate a post).");
+    }
+    const r = pullState(cwd, cfg.stateFile);
+    if (r.result === "error") throw new Error(`Could not read shared state from git (${r.error}). Not posting, to avoid duplicates.`);
+    baseTip = r.tip;
+    console.log(`  Shared state: ${r.result} (remote ${baseTip.slice(0, 7)}).`);
+  }
+  const resync = () => {
+    const r = pullState(cwd, cfg.stateFile);
+    if (r.result === "error") throw new Error(`Could not re-sync shared state (${r.error}).`);
+    baseTip = r.tip;
+  };
+  // Pushes the local state file. Returns "pushed" | "conflict" | "error".
+  const push = (message) => {
+    if (!gitSync || dry) return "pushed";
+    const r = commitPush(cwd, cfg.stateFile, message, { baseTip, ...gitIdentity });
+    if (r.tip) baseTip = r.tip;
+    if (r.result === "error") console.log(`  git push error: ${r.error}`);
+    return r.result === "nochange" ? "pushed" : r.result;
+  };
+  // Applies a change to the state and pushes it, retrying through conflicts.
+  const updateState = (mutate, message) => {
+    for (let i = 0; i < 4; i++) {
+      saveNewsStateFile(cfg.stateFile, mutate(loadNewsStateFile(cfg.stateFile)));
+      const r = push(message);
+      if (r === "pushed") return true;
+      if (r === "error") return false;
+      resync();
+    }
+    return false;
+  };
+
+  // ---- research (once) ----
+  console.log(`  Fetching feeds...`);
+  const { items, health } = await fetchAllNews();
+  if (items.length === 0) {
+    console.log(`  No feed returned any items — all sources failed or were blocked. Not posting.`);
+    writeNewsSummary({ outcome: "WARNING: every feed failed", health, dryRun: dry });
+    return;
+  }
+
+  // ---- decide + claim (retry if the other machine wins a race) ----
+  let story, choice, nowMs, ranked, claimStatus;
+  for (let attempt = 1; ; attempt++) {
+    nowMs = Date.now();
+    const state = pruneNewsState(loadNewsStateFile(cfg.stateFile), nowMs);
+
+    const block = gapBlock(state, nowMs, { minGapMin: cfg.minGapMin, pendingWaitMin: cfg.approvalWaitMin });
+    if (block) {
+      console.log(`  Standing down: ${block}.`);
+      writeNewsSummary({ outcome: "standing down", note: block, health, dryRun: dry });
+      return;
+    }
+    const todayCount = dailyCount(state, nowMs);
+    if (todayCount >= cfg.maxPerDay) {
+      console.log(`  Daily cap reached (${todayCount}/${cfg.maxPerDay}). Nothing to do.`);
+      writeNewsSummary({ outcome: `daily cap reached (${todayCount}/${cfg.maxPerDay})`, dryRun: dry });
+      return;
+    }
+
+    const pick = pickNewsStory(items, state, { nowMs, maxAgeHours: cfg.maxAgeHours, minScore: cfg.minScore, approvalMode, telegramConfigured: tgOn });
+    ranked = pick.ranked;
+    if (attempt === 1) {
+      console.log(`  ${items.length} items → ${pick.freshCount} fresh & usable → ${pick.clusterCount} distinct stories.`);
+      for (const r of ranked.slice(0, 5)) {
+        const tag = r.posted ? ", already handled" : r.decision.action !== "post" ? `, ${r.decision.action}: ${r.decision.reason}` : "";
+        console.log(`    [${r.score}${tag}] ${r.cluster.primary.title}  (${r.reasons.join("; ")})`);
+      }
+    }
+    if (!pick.choice) {
+      console.log(`  No story is ready to post (needs an unhandled story scoring ≥ ${cfg.minScore} that isn't waiting on confirmation).`);
+      writeNewsSummary({ outcome: "nothing ready", health, ranked, dryRun: dry });
+      return;
+    }
+    choice = pick.choice;
+    story = choice.cluster;
+    claimStatus = choice.decision.action === "approve" ? "pending" : "posted";
+    console.log(`  Chosen (${choice.score}, ${choice.decision.action}): ${story.primary.title}`);
+
+    if (dry) break;
+    saveNewsStateFile(cfg.stateFile, recordClaim(state, story, nowMs, claimStatus));
+    const r = push(`news: claim "${story.primary.title.slice(0, 60)}"`);
+    if (r === "pushed") break;
+    if (r === "conflict" && attempt < 3) {
+      console.log(`  Another runner pushed first (attempt ${attempt}); re-reading shared state and re-deciding...`);
+      resync();
+      continue;
+    }
+    // Could not claim: restore local state and stand down rather than risk a duplicate.
+    if (gitSync) { try { resync(); } catch { /* keep going to the message */ } }
+    console.log(r === "conflict" ? `  Lost the race ${attempt} times; standing down.` : `  Could not record the claim, so not posting (duplicate protection).`);
+    writeNewsSummary({ outcome: "standing down (claim not recorded)", story, score: choice.score, reasons: choice.reasons, health, ranked, dryRun: dry });
+    return;
+  }
+
+  // From here the claim is ours. If anything fails, release it.
+  const release = (why) => { if (!dry) updateState((s) => removeClaim(s, story), `news: release claim (${why})`); };
+
+  try {
+    // ---- write ----
+    let copy = null;
+    let provider = null;
+    if (hasAnyAiProvider()) {
+      const ai = await callAiForNews(buildNewsPrompt(story), story.sourceText);
+      if (ai) { copy = ai.copy; provider = ai.provider; }
+    }
+    if (!copy) {
+      if (String(process.env.NEWS_REQUIRE_AI).toLowerCase() === "true") {
+        console.log(`  NEWS_REQUIRE_AI=true and no validated AI copy — marking this story skipped.`);
+        if (!dry) updateState((s) => setEntryStatus(s, story, "skipped"), "news: skip (no validated AI copy)");
+        writeNewsSummary({ outcome: "skipped (AI required, none validated)", story, score: choice.score, reasons: choice.reasons, health, ranked, dryRun: dry });
+        return;
+      }
+      console.log(`  Using template fallback (cleaned original headline + attribution).`);
+      copy = buildNewsTemplate(story);
+    }
+
+    // Cashtags come from the headlines only (not the body text) so a passing
+    // mention in a summary doesn't tag an unrelated coin. Max 3 (Binance 220095).
+    const titleCoins = detectCoins(story.items.map((i) => i.title).join(" "));
+    const cashtags = titleCoins.slice(0, MAX_CASHTAGS_PER_POST).map((s) => `$${s}`);
+    const hashtags = pickHashtags(cashtags.join(" "));
+    const text = assembleNewsPost({
+      headline: copy.headline,
+      context: copy.context,
+      sources: story.sources,
+      score: choice.score,
+      ageMinutes: Math.max(0, Math.round((nowMs - story.firstSeen) / 60000)),
+      cashtags,
+      hashtags,
+      maxCashtags: MAX_CASHTAGS_PER_POST,
+      maxHashtags: MAX_HASHTAGS_PER_POST,
+    });
+    console.log(`\n--- News post preview (${provider ? `ai: ${provider}` : "template"}) ---\n${text}\n--------------------`);
+
+    // ---- human approval (only for stories that need it) ----
+    if (choice.decision.action === "approve") {
+      if (dry) {
+        console.log(`  [DRY RUN] Would send this draft to Telegram and wait up to ${cfg.approvalWaitMin} min for a tap.`);
+      } else {
+        console.log(`  Sent to Telegram for approval (${choice.decision.reason}); waiting up to ${cfg.approvalWaitMin} min...`);
+        const verdict = await requestApproval({
+          token: process.env.TELEGRAM_BOT_TOKEN,
+          chatId: process.env.TELEGRAM_CHAT_ID,
+          message: buildApprovalMessage({ text, story, score: choice.score, reasons: choice.reasons, provider, decisionReason: choice.decision.reason }),
+          id: storyId(story),
+          waitMs: cfg.approvalWaitMin * 60_000,
+          log: (m) => console.log(`  ${m}`),
+        });
+        console.log(`  Approval result: ${verdict}.`);
+        if (verdict !== "approved") {
+          // Rejected, timed out, or Telegram unreachable: never post. Mark it
+          // handled so it isn't offered again every poll.
+          updateState((s) => setEntryStatus(s, story, "skipped"), `news: ${verdict}`);
+          writeNewsSummary({ outcome: `not posted (${verdict})`, story, score: choice.score, reasons: choice.reasons, provider, text, health, ranked, dryRun: dry });
+          return;
+        }
+      }
+    }
+
+    // ---- publish ----
+    let id = null;
+    if (!dry) {
+      try {
+        id = await postToSquareWithOptionalImage(text, null);
+      } catch (err) {
+        release("publish failed");
+        throw err;
+      }
+    }
+    if (dry) {
+      console.log(`  [DRY RUN] Would publish contentType 1, ${text.length} chars. Nothing published, state file not updated.`);
+    } else {
+      if (claimStatus === "pending") updateState((s) => setEntryStatus(s, story, "posted"), "news: posted");
+      console.log(id ? `  SUCCESS — https://www.binance.com/square/post/${id}` : `  Post likely succeeded (no ID returned).`);
+      if (String(process.env.NEWS_CROSSPOST_X).toLowerCase() === "true") {
+        try {
+          const tweetId = await postToTwitter(text);
+          if (tweetId) console.log(`  Cross-posted to X: https://x.com/i/web/status/${tweetId}`);
+        } catch (e) {
+          console.log(`  X cross-post failed (Square post still succeeded): ${e.message}`);
+        }
+      }
+    }
+    writeNewsSummary({ outcome: dry ? "dry run" : "posted", story, score: choice.score, reasons: choice.reasons, provider, text, id, dryRun: dry, health, ranked });
+  } catch (err) {
+    // Anything unexpected before publishing: don't leave a phantom claim that
+    // would block the story forever.
+    if (!dry && claimStatus === "pending") release("error");
+    throw err;
+  }
+}
+
+// v9.5 NEW: writes a compact markdown summary of what a run did to
+// $GITHUB_STEP_SUMMARY — the file GitHub Actions renders directly in a run's
+// "Summary" tab. No separate workflow step is needed: this runs as part of
+// the same "Post to Binance Square" step, since all the data it needs
+// (source, provider, cashtags, hashtags, post ID) only exists here. If the
+// env var isn't set (running locally, or under `node --test`), this is a
+// silent no-op — nothing to configure, nothing that can break outside Actions.
+function writeJobSummary({ style, source, aiProvider, text, imageUrl, id, dryRun }) {
+  const summaryFile = process.env.GITHUB_STEP_SUMMARY;
+  if (!summaryFile) return;
+
+  const cashtags = [...new Set(countCashtags(text))];
+  const hashtags = text.match(/#[A-Za-z]+/g) || [];
+  const postUrl = id && id !== "dry-run-id" ? `https://www.binance.com/square/post/${id}` : null;
+
+  const rows = [
+    ["Style", style],
+    ["Source", aiProvider ? `AI (${aiProvider})` : source],
+    ["Length", `${text.length} chars`],
+    ["Cashtags", cashtags.length ? cashtags.join(", ") : "none"],
+    ["Hashtags", hashtags.length ? hashtags.join(", ") : "none"],
+    ["Image attached", imageUrl ? "yes" : "no"],
+    ["Dry run", dryRun ? "yes" : "no"],
+    ["Post", postUrl ? `[View on Binance Square](${postUrl})` : dryRun ? "n/a (dry run)" : "no ID returned"],
+  ];
+
+  const md = [
+    `### Daily post summary`,
+    ``,
+    `| Field | Value |`,
+    `|---|---|`,
+    ...rows.map(([k, v]) => `| ${k} | ${v} |`),
+    ``,
+  ].join("\n");
+
+  try {
+    fs.appendFileSync(summaryFile, md);
+  } catch (err) {
+    console.log(`  Could not write job summary (${err.message}) — non-fatal.`);
+  }
+}
+
+// ===========================================================================
 // MAIN — smart template selection; weekly article handled by separate modes
 // ===========================================================================
 
@@ -2426,6 +2890,11 @@ async function main() {
   }
   if (runMode === "weekly-publish") {
     return runWeeklyPublishMode();
+  }
+  // v10: breaking-news mode. Runs before the Sunday gate below on purpose —
+  // news doesn't take Sundays off.
+  if (runMode === "news") {
+    return runNewsMode();
   }
 
   const key = process.env.BINANCE_SQUARE_OPENAPI_KEY;
@@ -2463,9 +2932,7 @@ async function main() {
   // v4.2 BUG FIX: was checking OPENAI_API_KEY (leftover from before the
   // OpenRouter swap). If only OPENROUTER_API_KEY was set, aiEnabled evaluated
   // false and AI was silently skipped — no error, just straight to template.
-  const aiEnabled = Boolean(
-    process.env.GROQ_API_KEY || process.env.OPENROUTER_API_KEY || process.env.GEMINI_API_KEY
-  );
+  const aiEnabled = hasAnyAiProvider();
 
   // v4: Log available providers at startup so you can see which are configured
   const configuredProviders = AI_PROVIDERS
@@ -2624,13 +3091,16 @@ async function main() {
 
   let text = null;
   let source = "template";
+  let aiProvider = null;
 
   if (aiEnabled) {
     console.log(`  Attempting AI generation...`);
-    text = await buildAiPost(data, dayIndex, style, ctx);
-    if (text) {
+    const aiResult = await buildAiPost(data, dayIndex, style, ctx);
+    if (aiResult) {
+      text = aiResult.text;
+      aiProvider = aiResult.provider;
       source = "ai";
-      console.log(`  AI generation succeeded.`);
+      console.log(`  AI generation succeeded (${aiProvider}).`);
     } else {
       console.log(`  AI generation failed — falling back to template.`);
     }
@@ -2707,6 +3177,8 @@ async function main() {
     console.log(`  Post likely succeeded, but no ID was returned in the response.`);
   }
 
+  writeJobSummary({ style, source, aiProvider, text, imageUrl, id, dryRun: isDryRun() });
+
   // v9: Optional cross-post of the same text to X, from this same account.
   // Never blocks or fails the run — Square is the primary platform, X is a
   // bonus. Wrapped so a Twitter-side failure never masks the fact that the
@@ -2726,7 +3198,10 @@ async function main() {
 // calls main() when post.mjs is the script node was actually invoked with
 // (`node post.mjs`) — exactly what daily-post.yml and weekly runs already do,
 // so this changes nothing about how the GitHub Actions workflows behave.
-if (import.meta.url === `file://${process.argv[1]}`) {
+// v10.1: compare as file URLs, not by string-gluing "file://" onto the path.
+// On Windows the old check (`file://C:\\...` vs `file:///C:/...`) never matched,
+// so `node post.mjs` silently did nothing there.
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   main().catch((err) => {
     console.error("Failed:", err.message);
     process.exit(1);

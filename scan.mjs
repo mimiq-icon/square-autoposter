@@ -24,6 +24,22 @@ import fs from "fs";
 const BSQ_CLI = "/tmp/bsq/dist/index.js";
 const SCAN_MODE = process.env.SCAN_MODE || "trend";
 
+// v9.5 NEW: surfaces scraper health directly in the GitHub Actions run
+// summary instead of leaving it buried in the console log — the roadmap
+// concern this addresses is "no visibility into whether the scraper got
+// blocked vs. just found nothing." No-ops outside Actions (e.g. local runs).
+function writeScanHealthSummary(mode, status, detail) {
+  const summaryFile = process.env.GITHUB_STEP_SUMMARY;
+  if (!summaryFile) return;
+  const emoji = status === "blocked" ? "\u26a0\ufe0f" : "\u2705";
+  const md = `### Scanner health — ${mode}\n\n${emoji} **${status === "blocked" ? "Scraper unavailable" : "OK"}** — ${detail}\n\n`;
+  try {
+    fs.appendFileSync(summaryFile, md);
+  } catch (err) {
+    console.log(`  Could not write scan health summary (${err.message}) — non-fatal.`);
+  }
+}
+
 // Creators to track for competitor-scan mode.
 // Edit this list to add/remove creators you want to follow.
 const TRACKED_CREATORS = [
@@ -119,11 +135,13 @@ async function trendScan() {
   const raw = runBsq(["feed", "--pages", "2", "--size", "20"]);
   if (!raw || !raw.success) {
     console.log("Could not fetch feed — scraper may be blocked. Exiting.");
+    writeScanHealthSummary("trend", "blocked", "the initial feed fetch returned no data — the CLI may be rate-limited or blocked by Binance.");
     process.exit(0); // graceful exit, not an error
   }
 
   const posts = raw.data?.vos || [];
   console.log(`Fetched ${posts.length} posts from the feed.`);
+  writeScanHealthSummary("trend", "ok", `fetched ${posts.length} posts from the feed.`);
 
   // Extract all cashtags mentioned across the feed
   const cashtagCounts = {};
@@ -260,6 +278,13 @@ async function competitorScan() {
     allAnalyses.push(analysis);
     console.log(`  ✓ Analysis complete: avg ${analysis.avgLength} chars, ${analysis.avgCashtags} cashtags/post`);
   }
+
+  const failedCount = allAnalyses.filter((a) => a.error).length;
+  writeScanHealthSummary(
+    "competitor",
+    failedCount === allAnalyses.length ? "blocked" : "ok",
+    `analyzed ${allAnalyses.length - failedCount} of ${allAnalyses.length} tracked creators successfully.`
+  );
 
   // Build the Issue body with the full analysis
   const today = new Date().toISOString().slice(0, 10);
@@ -557,11 +582,13 @@ async function commentDigest() {
   const postsResp = runBsq(["user-posts", String(MY_CREATOR_ID)]);
   if (!postsResp || !postsResp.success) {
     console.log("Could not fetch your posts — scraper may be blocked. Exiting.");
+    writeScanHealthSummary("comments", "blocked", "fetching your own posts returned no data — the CLI may be rate-limited or blocked by Binance.");
     process.exit(0);
   }
 
   const myPosts = (postsResp.data?.vos || postsResp.data?.items || []).slice(0, 5);
   console.log(`Found ${myPosts.length} recent posts.`);
+  writeScanHealthSummary("comments", "ok", `checked comments on ${myPosts.length} recent posts.`);
 
   if (myPosts.length === 0) {
     console.log("No posts found. Exiting.");

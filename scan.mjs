@@ -689,8 +689,12 @@ async function generateSuggestedReply(commentText, postContext) {
 
   // Try Groq first
   const providers = [
-    { name: "groq", key: process.env.GROQ_API_KEY, url: "https://api.groq.com/openai/v1/chat/completions", model: "llama-3.3-70b-versatile" },
-    { name: "openrouter", key: process.env.OPENROUTER_API_KEY, url: "https://openrouter.ai/api/v1/chat/completions", model: "meta-llama/llama-3.3-70b-instruct:free" },
+    // v10.2: the old defaults (llama-3.3-70b-versatile, meta-llama/...:free) no
+    // longer exist / are no longer free. Same replacements as post.mjs; gpt-oss
+    // and the free router can spend tokens on hidden reasoning, so the reply
+    // limit is generous (the 150-char length check below still applies).
+    { name: "groq", key: process.env.GROQ_API_KEY, url: "https://api.groq.com/openai/v1/chat/completions", model: process.env.GROQ_MODEL || "openai/gpt-oss-120b", extra: { reasoning_effort: "low" } },
+    { name: "openrouter", key: process.env.OPENROUTER_API_KEY, url: "https://openrouter.ai/api/v1/chat/completions", model: process.env.OPENROUTER_MODEL || "openrouter/free", extra: {} },
   ];
 
   for (const p of providers) {
@@ -702,8 +706,9 @@ async function generateSuggestedReply(commentText, postContext) {
         body: JSON.stringify({
           model: p.model,
           messages: [{ role: "user", content: prompt }],
-          max_tokens: 100,
+          max_tokens: 800,
           temperature: 0.4,
+          ...p.extra,
         }),
       });
       if (!res.ok) continue;

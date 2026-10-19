@@ -173,16 +173,17 @@ const SQUARE_BASE_V2 = "https://www.binance.com/bapi/composite/v2/public/pgc/ope
 const IMAGE_POLL_INTERVAL_MS = 3000;
 const IMAGE_MAX_POLL_RETRIES = 10;
 
-// Free-tier-eligible Gemini model as of 2026.
-// v3.3 FIX: Switched default model from gemini-2.5-flash to gemini-2.0-flash.
-// 2.5-flash is a "thinking" model — it burns tokens on internal reasoning
-// before generating output, and those thinking tokens count against
-// maxOutputTokens. The model would think for ~480 tokens, start writing,
-// hit the 500-token ceiling after 40 chars, and get cut off — producing
-// the fragments you saw ("Here's a look at some trending crypto assets").
-// 2.0-flash doesn't have thinking, so all tokens go to output.
-// Override with GEMINI_MODEL env var if you want a different model.
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash";
+// v10.2: Gemini default is now gemini-3.8-flash (the model Google's own 404
+// error names as the replacement for gemini-2.0-flash).
+// History: gemini-2.0-flash was the default from v3.3 because 2.5-flash is a
+// "thinking" model whose hidden reasoning tokens count against
+// maxOutputTokens (the cut-off fragments seen in v3.3). Google shut down
+// gemini-2.0-flash on 2026-06-01 and gemini-2.5-flash is scheduled for
+// 2026-10-16 (see ai.google.dev/gemini-api/docs/deprecations), so the only
+// maintained Flash is the 3.x line, which also thinks. callGemini() now gives
+// 3.x models a much larger output budget so thinking can't truncate the post.
+// Override with the GEMINI_MODEL env var.
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.8-flash";
 const GEMINI_ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 
 // ---------------------------------------------------------------------------
@@ -192,9 +193,9 @@ const GEMINI_ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models
 // on ANY failure (rate limit, network error, validation failure, etc.).
 //
 // Provider order (first to last):
-//   1. Groq       — free, fast, Llama 3.3 70B. Primary.
+//   1. Groq       — free, fast, gpt-oss-120b (v10.2; Llama 3.3 70B was retired 2026-08-16). Primary.
 //   2. OpenRouter — free models available (Llama, Gemini, Mistral via one API). Fallback.
-//   3. Gemini     — free, was flaky. Last resort.
+//   3. Gemini     — free tier, gemini-3.8-flash (v10.2). Last resort.
 //   4. Template   — if all AI providers fail (existing fallback, unchanged).
 //
 // Each provider is independent. Set only the secrets you have. If you only
@@ -202,20 +203,36 @@ const GEMINI_ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models
 // have all three, they're tried in order until one succeeds.
 //
 // Optional model overrides via env vars:
-//   GROQ_MODEL         (default: llama-3.3-70b-versatile)
-//   OPENROUTER_MODEL   (default: meta-llama/llama-3.3-70b-instruct:free)
-//   GEMINI_MODEL       (default: gemini-2.0-flash)
+//   GROQ_MODEL         (default: openai/gpt-oss-120b)
+//   OPENROUTER_MODEL   (default: openrouter/free)
+//   GEMINI_MODEL       (default: gemini-3.8-flash)
 // ---------------------------------------------------------------------------
 const GROQ_BASE_URL = "https://api.groq.com/openai/v1";
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 
-const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
-// OpenRouter default: free Llama 3.3 70B. Other free options:
-//   "google/gemini-2.0-flash-exp:free"
-//   "mistralai/mistral-7b-instruct:free"
-//   "meta-llama/llama-3.1-8b-instruct:free"
-// Browse all at openrouter.ai/models (filter for "free")
-const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || "meta-llama/llama-3.3-70b-instruct:free";
+// v10.2: llama-3.3-70b-versatile was retired by Groq on 2026-08-16 (their
+// recommended replacements: openai/gpt-oss-120b or qwen/qwen3.6-27b).
+// gpt-oss is a reasoning model: see groqExtras() for the token/effort handling.
+const GROQ_MODEL = process.env.GROQ_MODEL || "openai/gpt-oss-120b";
+// v10.2: "meta-llama/llama-3.3-70b-instruct:free" stopped being free (OpenRouter
+// now answers 404 "unavailable for free" for it). The default is OpenRouter's
+// own Free Models Router, which picks a model that is free *at that moment*, so
+// a single model being retired can't break this provider again. The model
+// differs per request; every reply still goes through the same validators.
+// Some free models are reasoning models, hence the larger token budget below.
+// To pin one model instead, set OPENROUTER_MODEL (e.g. one ending in ":free" from
+// openrouter.ai/models?pricing=free), or a paid slug such as
+// "meta-llama/llama-3.3-70b-instruct" if you have credit.
+const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || "openrouter/free";
+
+// v10.2: gpt-oss models spend hidden "reasoning" tokens that count against the
+// completion limit, so the old 800-token cap could end a reply with
+// finish_reason "length" before any text was written. For these models ask for
+// low reasoning effort (supported values: low | medium | high) and allow 2000
+// tokens. Other Groq models keep the original request unchanged.
+function groqExtras(model) {
+  return /gpt-oss/i.test(model || "") ? { reasoning_effort: "low", max_tokens: 2000 } : {};
+}
 
 // Provider chain — order matters. Groq first (free + fast), OpenRouter second
 // (free models via aggregator), Gemini last (free but was problematic).
@@ -224,13 +241,13 @@ const AI_PROVIDERS = [
     name: "groq",
     envKey: "GROQ_API_KEY",
     model: GROQ_MODEL,
-    callFn: (prompt, key, model) => callOpenAICompatible(prompt, key, model, GROQ_BASE_URL),
+    callFn: (prompt, key, model) => callOpenAICompatible(prompt, key, model, GROQ_BASE_URL, 60_000, groqExtras(model)),
   },
   {
     name: "openrouter",
     envKey: "OPENROUTER_API_KEY",
     model: OPENROUTER_MODEL,
-    callFn: (prompt, key, model) => callOpenAICompatible(prompt, key, model, OPENROUTER_BASE_URL),
+    callFn: (prompt, key, model) => callOpenAICompatible(prompt, key, model, OPENROUTER_BASE_URL, 60_000, { max_tokens: 2000 }),
   },
   {
     name: "gemini",
@@ -1180,8 +1197,12 @@ async function callGemini(prompt, key, model) {
   // gemini-2.5-* models are "thinking" models that burn tokens on internal
   // reasoning. If using a 2.5 model, disable thinking via thinkingConfig.
   const isThinkingModel = model.includes("2.5");
+  // v10.2: Gemini 3.x and later also think by default. Rather than guess a
+  // thinking-control field that differs between model generations, give them
+  // enough room for thinking plus the (short) post.
+  const isNewGen = /gemini-([3-9]|\d{2,})/.test(model);
   const generationConfig = {
-    maxOutputTokens: 800,
+    maxOutputTokens: isNewGen ? 4096 : 800,
     temperature: 0.4,
     topP: 0.9,
   };
@@ -1211,13 +1232,19 @@ async function callGemini(prompt, key, model) {
     throw new Error(`Gemini finishReason: ${finishReason}`);
   }
 
-  return candidate?.content?.parts?.[0]?.text || null;
+  // v10.2: join every visible text part (skipping any thought parts) instead of
+  // trusting that the answer is always parts[0].
+  const text = (candidate?.content?.parts || [])
+    .filter((part) => part && !part.thought && typeof part.text === "string")
+    .map((part) => part.text)
+    .join("");
+  return text || null;
 }
 
 // v4 NEW: OpenAI-compatible API caller. Works for both Groq and OpenAI
 // (they use the same chat completions format, just different base URLs).
 // Throws on any error so the caller can catch and fall back to next provider.
-async function callOpenAICompatible(prompt, key, model, baseUrl, timeoutMs = 60_000) {
+async function callOpenAICompatible(prompt, key, model, baseUrl, timeoutMs = 60_000, extra = {}) {
   if (!key) return null;
 
   const res = await fetch(`${baseUrl}/chat/completions`, {
@@ -1232,6 +1259,7 @@ async function callOpenAICompatible(prompt, key, model, baseUrl, timeoutMs = 60_
       max_tokens: 800,
       temperature: 0.4,
       top_p: 0.9,
+      ...extra, // v10.2: provider/model-specific options (e.g. reasoning_effort)
     }),
     // A hung provider must not stall the run forever (local CPU models get a
     // longer limit from their caller).
@@ -2473,8 +2501,15 @@ const NEWS_FETCH_TIMEOUT_MS = 15_000;
 // so a 2-minute poll doesn't re-download unchanged feeds (polite to publishers,
 // and a 304 is fast). Items are filtered/tagged BEFORE caching.
 async function fetchNewsFeed(feed, cache) {
+  // v10.2: the SEC's fair-access policy asks automated clients to identify
+  // themselves with a contact address. Set SEC_USER_AGENT (e.g.
+  // "my-bot you@example.com") as a repo secret/env var; used for sec.gov only.
+  const ua =
+    process.env.SEC_USER_AGENT && /(^|\.)sec\.gov$/i.test(new URL(feed.url).hostname)
+      ? process.env.SEC_USER_AGENT
+      : "Mozilla/5.0 (compatible; square-autoposter/10; +https://github.com)";
   const headers = {
-    "User-Agent": "Mozilla/5.0 (compatible; square-autoposter/10; +https://github.com)",
+    "User-Agent": ua,
     Accept: "application/rss+xml, application/atom+xml, application/xml, text/xml, */*",
   };
   const prev = cache && cache[feed.url];
@@ -3240,4 +3275,12 @@ export {
   buildQuickChartPreviewUrl,
   buildDraftIssueBody,
   parseDraftIssue,
+  // v10.2 (exported for test/providers.test.mjs)
+  groqExtras,
+  callOpenAICompatible,
+  callGemini,
+  fetchNewsFeed,
+  GROQ_MODEL,
+  GEMINI_MODEL,
+  OPENROUTER_MODEL,
 };

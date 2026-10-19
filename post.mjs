@@ -2495,7 +2495,34 @@ async function postToSquareWithOptionalImage(text, imageUrl) {
 //      NEWS_REQUIRE_AI (true = skip the story instead of using the template
 //      fallback), NEWS_CROSSPOST_X (true = also post to X).
 // ===========================================================================
-const NEWS_FETCH_TIMEOUT_MS = 15_000;
+const NEWS_FETCH_TIMEOUT_MS = 15_000; // default; NEWS_FETCH_TIMEOUT_SEC overrides (raise on a slow link)
+
+// v10.2: Node reports every network-level failure as just "fetch failed" and
+// hides the real reason (DNS, connection reset, connect timeout, TLS...) in
+// err.cause. Surface it so the log says what actually went wrong.
+function describeFetchError(err) {
+  const cause = err?.cause;
+  const code = cause?.code || cause?.errno || "";
+  const base = err?.name === "TimeoutError" ? "timed out" : err?.message || String(err);
+  return code ? `${base} [${code}]` : base;
+}
+
+// One retry for network-level failures only (never for an HTTP status such as
+// 403/404, which a retry won't fix). The second attempt gets a longer timeout.
+async function fetchFeedWithRetry(url, headers) {
+  const timeoutMs = (Number(process.env.NEWS_FETCH_TIMEOUT_SEC) || NEWS_FETCH_TIMEOUT_MS / 1000) * 1000;
+  try {
+    return await fetch(url, { headers, signal: AbortSignal.timeout(timeoutMs) });
+  } catch (firstErr) {
+    const delay = process.env.NEWS_RETRY_DELAY_MS !== undefined ? Number(process.env.NEWS_RETRY_DELAY_MS) : 1500;
+    await new Promise((r) => setTimeout(r, delay));
+    try {
+      return await fetch(url, { headers, signal: AbortSignal.timeout(timeoutMs + 10_000) });
+    } catch (secondErr) {
+      throw new Error(describeFetchError(secondErr));
+    }
+  }
+}
 
 // Fetches one feed. With a cache object, sends If-None-Match/If-Modified-Since
 // so a 2-minute poll doesn't re-download unchanged feeds (polite to publishers,
@@ -2516,7 +2543,7 @@ async function fetchNewsFeed(feed, cache) {
   if (prev?.etag) headers["If-None-Match"] = prev.etag;
   if (prev?.lastModified) headers["If-Modified-Since"] = prev.lastModified;
 
-  const res = await fetch(feed.url, { headers, signal: AbortSignal.timeout(NEWS_FETCH_TIMEOUT_MS) });
+  const res = await fetchFeedWithRetry(feed.url, headers);
   if (res.status === 304 && prev?.items) return prev.items;
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
@@ -3283,4 +3310,5 @@ export {
   GROQ_MODEL,
   GEMINI_MODEL,
   OPENROUTER_MODEL,
+  describeFetchError,
 };

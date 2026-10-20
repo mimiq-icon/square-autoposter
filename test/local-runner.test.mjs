@@ -136,3 +136,11 @@ describe("runCycle", () => {
     assert.equal(r.code, 1);
   });
 });
+
+describe("buildChildEnv mode (v10.2)", () => {
+  test("defaults to news; mode=alerts sets RUN_MODE=alerts and keeps git sync", () => {
+    assert.equal(buildChildEnv({}, {}).RUN_MODE, "news");
+    const e = buildChildEnv({}, { mode: "alerts", gitOk: true });
+    assert.equal(e.RUN_MODE, "alerts"); assert.equal(e.NEWS_GIT_SYNC, "true");
+  });
+});

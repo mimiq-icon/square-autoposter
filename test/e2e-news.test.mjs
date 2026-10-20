@@ -25,7 +25,7 @@ function world() {
   sh(root, "init", "-q", "--bare", "-b", "main", bare);
   const seed = path.join(root, "seed");
   sh(root, "clone", "-q", bare, seed);
-  for (const f of ["post.mjs", "news.mjs", "news-sync.mjs", "telegram.mjs"]) fs.copyFileSync(path.join(ROOT, f), path.join(seed, f));
+  for (const f of ["post.mjs", "news.mjs", "news-sync.mjs", "telegram.mjs", "alerts.mjs", "article.mjs"]) fs.copyFileSync(path.join(ROOT, f), path.join(seed, f));
   fs.mkdirSync(path.join(seed, "news-state"));
   fs.writeFileSync(path.join(seed, "news-state/posted.json"), '{"posted":[]}\n');
   const id = ["-c", "user.name=t", "-c", "user.email=t@t"];

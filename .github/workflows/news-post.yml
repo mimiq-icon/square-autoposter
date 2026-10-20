@@ -66,6 +66,9 @@ jobs:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          # v10.2: optional. The SEC asks automated clients to identify themselves
+          # (e.g. "my-bot you@example.com"). Empty/unset = default user-agent.
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
 
           # Scheduled runs are always live; manual runs default to dry-run.
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'true' }}
@@ -80,13 +83,15 @@ jobs:
           # Without them, sensitive stories still need 2 outlets before posting.
           # TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           # TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          # NEWS_MAX_PER_DAY: '12'        # hard daily cap
+          # NEWS_MAX_PER_DAY: '40'        # hard daily cap (default 40). Binance allows 100 API posts/day in total, shared by every post type
+          # NEWS_DISCLAIMER: 'off'        # news posts end with a rotating short disclaimer; 'off' removes it
+          # NEWS_CHART: 'off'             # news posts about a tracked coin attach a 48h price chart; 'off' removes it
           # NEWS_MAX_AGE_HOURS: '6'       # ignore stories older than this
           # NEWS_REQUIRE_AI: 'true'       # skip a story rather than post the plain-headline fallback
           # NEWS_EXTRA_FEEDS: 'Name|https://example.com/rss,Name2|https://other.com/feed'
           #
           # Cross-post news to X too. Off by default: X bills per post, and
-          # this can be up to 12 posts a day. Needs the 4 TWITTER_* secrets.
+          # this can be dozens of posts a day. Needs the 4 TWITTER_* secrets.
           # NEWS_CROSSPOST_X: 'true'
           # TWITTER_API_KEY: ${{ secrets.TWITTER_API_KEY }}
           # TWITTER_API_SECRET: ${{ secrets.TWITTER_API_SECRET }}

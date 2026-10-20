@@ -1,0 +1,80 @@
+name: Weekly Article (Telegram approval)
+
+# v10.2: the weekly article is WRITTEN BY THE AI from real data (market stats,
+# majors, the headlines this bot posted during the week) and validated against
+# those facts. The whole article is then sent to your Telegram; it is published
+# to Binance Square ONLY when you tap "Post". Tap "Skip" (or do nothing) and
+# nothing is published; the draft is kept as a downloadable artifact.
+#
+# This replaces the issue + label flow (weekly-article-draft.yml is now manual).
+#
+# The job waits for your tap, so it can run for hours. On a PUBLIC repo Actions
+# minutes are free; on a private repo waiting counts, so lower WEEKLY_APPROVAL_WAIT_MIN.
+#
+# Needs secrets: BINANCE_SQUARE_OPENAPI_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID,
+# and at least one of GROQ_API_KEY / OPENROUTER_API_KEY / GEMINI_API_KEY.
+
+on:
+  schedule:
+    # 07:30 UTC every Sunday = 09:30 Harare time.
+    - cron: '30 7 * * 0'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (write the article and show it in the log; send nothing to Telegram, publish nothing)'
+        required: false
+        type: boolean
+        default: true
+      wait_minutes:
+        description: 'How long to wait for your Post/Skip tap'
+        required: false
+        type: string
+        default: '240'
+
+concurrency:
+  group: weekly-article
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  article:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 'lts/*'
+
+      - name: Write the article, send it to Telegram, publish on approval
+        env:
+          RUN_MODE: weekly-approve
+          BINANCE_SQUARE_OPENAPI_KEY: ${{ secrets.BINANCE_SQUARE_OPENAPI_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          COINGECKO_API_KEY: ${{ secrets.COINGECKO_API_KEY }}
+          # Scheduled runs are live; manual runs default to dry-run.
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'true' }}
+          WEEKLY_APPROVAL_WAIT_MIN: ${{ github.event.inputs.wait_minutes || '240' }}
+          # Optional teaser on X (needs the TWITTER_* secrets):
+          # TWITTER_API_KEY: ${{ secrets.TWITTER_API_KEY }}
+          # TWITTER_API_SECRET: ${{ secrets.TWITTER_API_SECRET }}
+          # TWITTER_ACCESS_TOKEN: ${{ secrets.TWITTER_ACCESS_TOKEN }}
+          # TWITTER_ACCESS_TOKEN_SECRET: ${{ secrets.TWITTER_ACCESS_TOKEN_SECRET }}
+        run: node post.mjs
+
+      - name: Keep the draft
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-draft
+          path: weekly-draft.json
+          if-no-files-found: ignore

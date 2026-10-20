@@ -10,12 +10,15 @@ name: Weekly Article Draft
 # Publishing happens separately, in weekly-article-publish.yml, and only
 # once you add the `approved-for-posting` label to the issue this creates.
 
+# v10.2: the weekly article is now written by the AI and approved on Telegram
+# by weekly-article-telegram.yml. To avoid two articles every Sunday THIS
+# workflow's schedule is switched off (manual runs still work, and the
+# label-approval flow below is unchanged). To go back to the issue-based flow,
+# remove the leading "#" on the three schedule lines and disable the Telegram one.
 on:
-  schedule:
-    # 07:30 UTC every Sunday = 09:30 Harare/CAT time — 1 hour before
-    # daily-post.yml's regular 08:30 UTC run, so the draft issue exists
-    # before daily-post.yml checks the day and steps aside for Sunday.
-    - cron: '30 7 * * 0'
+  # schedule:
+  #   # 07:30 UTC every Sunday = 09:30 Harare/CAT time.
+  #   - cron: '30 7 * * 0'
   workflow_dispatch:
     inputs:
       day_index_override:
@@ -52,7 +55,7 @@ jobs:
         run: node post.mjs
 
       - name: Open or update this week's draft Issue
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const fs = require('fs');

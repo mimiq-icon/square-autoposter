@@ -1,0 +1,68 @@
+name: Price Alerts
+
+# v10.2: "Bitcoin falls below $83,000", "Ethereum is up 7.3% in 24 hours".
+# Data-driven short posts: Binance's public prices decide WHAT happened, the AI
+# only phrases it (validated against the data; plain template as fallback),
+# with a 48h price chart attached.
+#
+# THE SCHEDULE IS OFF BY DEFAULT because your PC runner (local-runner.mjs)
+# already checks for alerts every cycle, and running both is wasteful (they
+# share news-state/alerts.json through git, so they never double-post, but one
+# is enough). Turn the schedule on only if the PC is often off: remove the "#"
+# from the two lines under "schedule:".
+#
+# Approval: without Telegram secrets here, alerts post automatically. Add the
+# two TELEGRAM_* secrets below to be asked first (the run then waits for your tap).
+
+on:
+  # schedule:
+  #   - cron: '*/15 * * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (print the alert + post, publish nothing, save no state)'
+        required: false
+        type: boolean
+        default: true
+
+concurrency:
+  group: price-alerts
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  alerts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0   # the claim lock builds commits on the remote tip
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 'lts/*'
+
+      - name: Check prices and post an alert if one is due
+        env:
+          RUN_MODE: alerts
+          NEWS_GIT_SYNC: 'true'
+          BINANCE_SQUARE_OPENAPI_KEY: ${{ secrets.BINANCE_SQUARE_OPENAPI_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'true' }}
+          # --- Optional tuning (uncomment to change) ---
+          # ALERT_COINS: 'BTC,ETH,BNB,SOL,XRP,ADA,DOGE,LINK'
+          # ALERT_MOVE_PCT: '5'            # alert when a coin moves this % in 24h
+          # ALERT_LEVEL_PCT: '1.25'        # round-level spacing as % of price ($1,000 for BTC at ~$80k)
+          # ALERT_MAX_PER_DAY: '20'
+          # ALERT_CHART: 'off'             # no chart image
+          # ALERT_APPROVAL: 'all'          # needs the two Telegram secrets
+          # TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          # TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: node post.mjs

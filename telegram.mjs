@@ -137,3 +137,64 @@ export async function requestApproval({
   await finish("⏱ Expired — not posted");
   return "timeout";
 }
+
+// ---------------------------------------------------------------------------
+// v10.2: price alerts and the weekly article
+// ---------------------------------------------------------------------------
+
+export function buildAlertApprovalMessage({ text, alert, provider }) {
+  const lines = [
+    "<b>Approve this price alert?</b>",
+    "",
+    `<pre>${escapeHtml(text)}</pre>`,
+    "",
+    `${escapeHtml(alert.name)} · ${alert.kind === "level" ? "level cross" : "24h move"} · score ${alert.score}`,
+    `Written by: ${provider ? escapeHtml(provider) : "template (data only)"}`,
+  ];
+  return lines.join("\n");
+}
+
+export function buildArticleApprovalMessage({ title, words, provider }) {
+  return [
+    "<b>Approve this weekly article?</b>",
+    "",
+    `<b>${escapeHtml(title)}</b>`,
+    `${words} words · written by ${provider ? escapeHtml(provider) : "the data template"}`,
+    "",
+    "The full text is in the messages above. Tap Post to publish it on Binance Square, or Skip.",
+  ].join("\n");
+}
+
+// Splits long text on paragraph (then line, then space) boundaries so each
+// piece fits Telegram's 4096-character message limit.
+export function splitForTelegram(text, max = 3500) {
+  const out = [];
+  let rest = String(text ?? "").trim();
+  while (rest.length > max) {
+    let cut = rest.lastIndexOf("\n\n", max);
+    if (cut < max * 0.5) cut = rest.lastIndexOf("\n", max);
+    if (cut < max * 0.5) cut = rest.lastIndexOf(" ", max);
+    if (cut < max * 0.3) cut = max;
+    out.push(rest.slice(0, cut).trim());
+    rest = rest.slice(cut).trim();
+  }
+  if (rest) out.push(rest);
+  return out;
+}
+
+// Sends plain-text messages (no formatting, so markdown in an article shows
+// exactly as written). Returns the number sent; throws on the first failure.
+export async function sendTextChunks({ token, chatId, text, fetchFn = fetch, max = 3500 }) {
+  const parts = splitForTelegram(text, max);
+  for (const part of parts) {
+    const res = await fetchFn(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: String(chatId), text: part, disable_web_page_preview: true }),
+      signal: AbortSignal.timeout(20000),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || json.ok === false) throw new Error(`Telegram sendMessage: ${json.description || res.status}`);
+  }
+  return parts.length;
+}

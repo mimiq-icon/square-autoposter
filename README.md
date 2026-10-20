@@ -32,11 +32,12 @@ Multi-account farming, automated "Chat Room" community bots, and CreatorPad rewa
 | Secret | Required? | Purpose |
 |---|---|---|
 | `BINANCE_SQUARE_OPENAPI_KEY` | **Yes** | Posting to Square. Not needed for `RUN_MODE=weekly-draft` (drafting doesn't post). |
-| `GROQ_API_KEY` | No | AI provider #1 (free, fast, Llama 3.3 70B). Get one at [console.groq.com](https://console.groq.com). |
-| `OPENROUTER_API_KEY` | No | AI provider #2 (fallback). Get one at [openrouter.ai/keys](https://openrouter.ai/keys). |
+| `GROQ_API_KEY` | No | AI provider #1 (free, fast, `openai/gpt-oss-120b`; Groq retired Llama 3.3 70B on 2026-08-16). Get one at [console.groq.com](https://console.groq.com). |
+| `OPENROUTER_API_KEY` | No | AI provider #2 (fallback), using OpenRouter's Free Models Router (`openrouter/free`), which always picks a currently-free model. Get a key at [openrouter.ai/keys](https://openrouter.ai/keys). |
 | `GEMINI_API_KEY` | No | AI provider #3 (last resort). Get one at [aistudio.google.com/apikey](https://aistudio.google.com/apikey). |
 | `COINGECKO_API_KEY` | No, but recommended | Free CoinGecko Demo key. Without it, every request shares the worldwide keyless rate-limit bucket (5–15 req/min). `getMarketData()` is the one call every code path depends on, so this is the single highest-leverage reliability secret to set. Get one at [coingecko.com/en/developers/dashboard](https://www.coingecko.com/en/developers/dashboard). |
 | `TWITTER_API_KEY`, `TWITTER_API_SECRET`, `TWITTER_ACCESS_TOKEN`, `TWITTER_ACCESS_TOKEN_SECRET` | No — all 4 or none | Cross-posts the same daily text to X, from the same account/voice. Needs an X developer app set to "Read and Write." X moved new developer accounts to pay-per-use pricing in Feb 2026 — check current pricing before enabling. |
+| `SEC_USER_AGENT` | No | Identifies your bot to sec.gov when it fetches the SEC press-release feed, e.g. `my-bot you@example.com`. The SEC asks automated clients to do this; without it the SEC feed may be refused (HTTP 403) and is simply skipped. Only ever sent to sec.gov. |
 | `SQUARE_CREATOR_ID` | Only for `comment-digest.yml` | Your own Square creator ID, so the scanner can fetch comments on your own posts. |
 
 Model overrides (all optional, sane defaults baked in): `GROQ_MODEL`, `OPENROUTER_MODEL`, `GEMINI_MODEL`.
@@ -135,6 +136,14 @@ flowchart TD
 ## Observability
 
 Every daily-post run writes a **Job Summary** (visible in the Actions run's "Summary" tab, no extra clicks) with: style used, source (AI provider or template/fallback), character count, cashtags, hashtags, whether a chart was attached, dry-run status, and a link to the published post if successful. The scanner workflows write a one-line health status (OK / blocked) the same way.
+
+## v10.2 additions: alerts, charts, AI-written weekly article
+
+**Price alerts** (`alerts.mjs`, `RUN_MODE=alerts`). Binance's public prices decide what happened (a round level such as $83,000 was crossed, or a coin moved 5%+ in 24 hours); the AI only phrases it from those facts, validated like news copy, with a data-only template as the fallback; a 48-hour price chart is attached. The PC runner checks every cycle. By default it asks for your Telegram tap when Telegram is set up (`ALERT_APPROVAL=off` to auto-post). `alert-post.yml` can also run it on GitHub (schedule off by default). Alerts and news share the git-based claim lock, so two machines never post the same alert.
+
+**News posts** now end with a rotating short disclaimer (`NEWS_DISCLAIMER`), attach a price chart when the story's lead coin is tracked (`NEWS_CHART=off`), and the daily cap is 40 (`NEWS_MAX_PER_DAY`; Binance allows 100 API posts per day and 400 image uploads per day in total).
+
+**Weekly article** (`article.mjs`, `weekly-article-telegram.yml`, Sundays 07:30 UTC). The AI writes it from real data plus the headlines the bot posted that week; every number, coin and name is checked against those facts and the data template is the fallback. The full text arrives in your Telegram and is published only when you tap Post. The old issue + label flow (`weekly-article-draft.yml`) is now manual-only.
 
 ## Testing
 

@@ -146,8 +146,8 @@ export function runCycle({ env, cwd = HERE, log, timeoutMs = 15 * 60_000, spawnF
 
 // ---------- environment for the child ----------
 
-export function buildChildEnv(baseEnv, { dryRun = false, gitOk = true } = {}) {
-  const env = { ...baseEnv, RUN_MODE: "news" };
+export function buildChildEnv(baseEnv, { dryRun = false, gitOk = true, mode = "news" } = {}) {
+  const env = { ...baseEnv, RUN_MODE: mode };
   env.NEWS_GIT_SYNC = env.NEWS_GIT_SYNC || (gitOk ? "true" : "false");
   env.NEWS_FEED_CACHE_FILE = env.NEWS_FEED_CACHE_FILE || path.join(".cache", "news-feeds.json");
   // Local model first on the PC; cloud providers remain as fallbacks.
@@ -200,6 +200,14 @@ export async function main(argv = process.argv.slice(2)) {
     const env = buildChildEnv({ ...process.env }, { dryRun, gitOk });
     const { code, timedOut } = await runCycle({ env, log });
     if (code === 0) failures = 0; else failures++;
+    // v10.2: price alerts ("Bitcoin falls below $83,000") share the cycle. A
+    // failure here is logged but never counts toward the news back-off.
+    if (!/^(off|false|no|0)$/i.test(String(process.env.ALERTS_ENABLED || "").trim()) && !stopping) {
+      const aStarted = Date.now();
+      const alertEnv = buildChildEnv({ ...process.env }, { dryRun, gitOk, mode: "alerts" });
+      const a = await runCycle({ env: alertEnv, log, timeoutMs: 5 * 60_000 });
+      log(`alerts ${a.code === 0 ? "ok" : `FAILED (exit ${a.code}${a.timedOut ? ", timed out" : ""})`} in ${Math.round((Date.now() - aStarted) / 1000)}s`);
+    }
     log(`cycle ${code === 0 ? "ok" : `FAILED (exit ${code}${timedOut ? ", timed out" : ""})`} in ${Math.round((Date.now() - started) / 1000)}s`);
     if (once || stopping) break;
     const delay = nextDelayMs(baseMs, failures);

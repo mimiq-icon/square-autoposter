@@ -2,7 +2,7 @@
 
 Your Windows 11 PC (i5-8365U, 8 GB RAM, no GPU) is plenty for this. The PC checks the news feeds every ~2.5 minutes and writes posts with a small local AI model. GitHub keeps running hourly in the background, so **the PC does not need to be on 24/7**; when it's off or asleep, GitHub carries on.
 
-Before you start, you need these in the repo (upload the v10.1 files to GitHub and commit): `post.mjs`, `news.mjs`, `news-sync.mjs`, `telegram.mjs`, `local-runner.mjs`, `start-news.bat`, `.env.example`, `.gitignore`, `.github/workflows/news-post.yml`.
+Before you start, you need these in the repo (upload the v10.2 files to GitHub and commit; v10.2 replaced the retired Groq and Gemini default models, see CHANGELOG.md): `post.mjs`, `news.mjs`, `news-sync.mjs`, `telegram.mjs`, `local-runner.mjs`, `start-news.bat`, `.env.example`, `.gitignore`, `.github/workflows/news-post.yml`.
 
 ## 1. Install three programs
 
@@ -56,7 +56,8 @@ notepad .env
 
 - `BINANCE_SQUARE_OPENAPI_KEY` — the same key you saved as a GitHub secret.
 - `OLLAMA_MODEL=qwen2.5:3b` — already filled in.
-- `GROQ_API_KEY` etc. — optional cloud backups, used if the local model is down or its answer fails the checker. Leave blank if you don't have them.
+- `GROQ_API_KEY` etc. — optional cloud backups, used if the local model is down or its answer fails the checker. Leave blank if you don't have them. Their default models are set in the code (Groq `openai/gpt-oss-120b`, Gemini `gemini-3.8-flash`, OpenRouter `openrouter/free`); only add `GROQ_MODEL=` or `GEMINI_MODEL=` lines here if a provider reports that a model no longer exists.
+- `SEC_USER_AGENT` — optional, a name plus contact such as `my-bot you@example.com`, so the SEC will serve its press-release feed.
 - Telegram (optional, recommended): see step 5.
 
 `.env` is git-ignored, so it never gets uploaded. Don't paste its contents into chats or issues. If a key is ever exposed, regenerate it.
@@ -125,3 +126,10 @@ git pull
 ## What you're trusting
 
 The bot reports what the outlets report. A wrong story in a feed can become a wrong post. The checks (importance bar, two outlets for risky claims, fact-checker on rewrites, optional tap) reduce that; they don't make it zero. For the most control, use `NEWS_APPROVAL=all`.
+
+
+## v10.2: what else the runner does now
+
+- **Price alerts** are checked every cycle after the news check (log line `alerts ok in Ns`). With Telegram set up they ask for your tap first; add `ALERT_APPROVAL=off` to `.env` to auto-post, or `ALERTS_ENABLED=off` to switch them off.
+- **A line in `.env` that starts with `#` is a comment and does nothing.** To turn a setting on, type it on a new line WITHOUT the `#`, for example `NEWS_APPROVAL=all`, then save. The first line of a run, `NEWS MODE (... approval all ...)`, shows what was actually loaded.
+- New files must be in your clone: after uploading to GitHub run `git fetch origin` then `git reset --hard origin/main`.

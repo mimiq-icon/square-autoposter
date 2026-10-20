@@ -94,9 +94,18 @@ import {
   NEWS_FEEDS, parseExtraFeeds, parseFeed, normalizeNewsState, pruneNewsState, dailyCount,
   recordClaim, setEntryStatus, removeClaim, gapBlock, resolveApprovalMode,
   pickNewsStory, buildNewsPrompt, parseNewsAiOutput, validateNewsCopy,
-  buildNewsTemplate, assembleNewsPost, detectCoins,
+  buildNewsTemplate, assembleNewsPost, resolveNewsDisclaimer, detectCoins,
 } from "./news.mjs";
-import { telegramConfigured, buildApprovalMessage, requestApproval, storyId } from "./telegram.mjs";
+import {
+  telegramConfigured, buildApprovalMessage, requestApproval, storyId,
+  buildAlertApprovalMessage, buildArticleApprovalMessage, sendTextChunks,
+} from "./telegram.mjs";
+import {
+  DEFAULT_ALERT_COINS, COIN_NAMES, detectAlerts, alertFacts, buildAlertPrompt, buildAlertTemplate,
+  assembleAlertPost, buildPriceChartConfig, fmtUsd, fmtLevel, loadAlertState, saveAlertState,
+  pruneAlertState, recordAlertClaim, setAlertStatus, removeAlertClaim, alertsToday,
+} from "./alerts.mjs";
+import { buildArticleFacts, buildArticlePrompt, parseArticleOutput, validateArticle, wordCount } from "./article.mjs";
 import { gitAvailable, pullState, commitPush } from "./news-sync.mjs";
 
 // ---------------------------------------------------------------------------
@@ -241,19 +250,21 @@ const AI_PROVIDERS = [
     name: "groq",
     envKey: "GROQ_API_KEY",
     model: GROQ_MODEL,
-    callFn: (prompt, key, model) => callOpenAICompatible(prompt, key, model, GROQ_BASE_URL, 60_000, groqExtras(model)),
+    callFn: (prompt, key, model, opts = {}) =>
+      callOpenAICompatible(prompt, key, model, GROQ_BASE_URL, opts.long ? 120_000 : 60_000, opts.long ? { ...groqExtras(model), max_tokens: 6000 } : groqExtras(model)),
   },
   {
     name: "openrouter",
     envKey: "OPENROUTER_API_KEY",
     model: OPENROUTER_MODEL,
-    callFn: (prompt, key, model) => callOpenAICompatible(prompt, key, model, OPENROUTER_BASE_URL, 60_000, { max_tokens: 2000 }),
+    callFn: (prompt, key, model, opts = {}) =>
+      callOpenAICompatible(prompt, key, model, OPENROUTER_BASE_URL, opts.long ? 120_000 : 60_000, { max_tokens: opts.long ? 6000 : 2000 }),
   },
   {
     name: "gemini",
     envKey: "GEMINI_API_KEY",
     model: GEMINI_MODEL,
-    callFn: (prompt, key, model) => callGemini(prompt, key, model),
+    callFn: (prompt, key, model, opts = {}) => callGemini(prompt, key, model, opts),
   },
   // v10.1: a model running on your own machine via Ollama (or LM Studio — any
   // server speaking the OpenAI chat format). "API" here just means "talk to a
@@ -265,8 +276,8 @@ const AI_PROVIDERS = [
     name: "ollama",
     envKey: "OLLAMA_MODEL",
     model: process.env.OLLAMA_MODEL,
-    callFn: (prompt, key, model) =>
-      callOpenAICompatible(prompt, "ollama", model, process.env.OLLAMA_BASE_URL || "http://localhost:11434/v1", 240_000),
+    callFn: (prompt, key, model, opts = {}) =>
+      callOpenAICompatible(prompt, "ollama", model, process.env.OLLAMA_BASE_URL || "http://localhost:11434/v1", opts.long ? 600_000 : 240_000, opts.long ? { max_tokens: 3000 } : {}),
   },
 ];
 
@@ -466,7 +477,9 @@ async function getGlobalMarket() {
     totalVolume: data.data.total_volume.usd,
     btcDominance: data.data.market_cap_percentage.btc,
     ethDominance: data.data.market_cap_percentage.eth,
-    mcapChange24h: data.data.market_cap_change_percentage_usd,
+    // v10.2 FIX: CoinGecko's field is market_cap_change_percentage_24h_usd; the old
+    // name never existed, so this was always undefined ("n/a" in posts/articles).
+    mcapChange24h: data.data.market_cap_change_percentage_24h_usd ?? data.data.market_cap_change_percentage_usd,
   };
 }
 
@@ -568,7 +581,8 @@ function fmtPrice(n) {
   } else {
     maxDecimals = 2;
   }
-  return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: maxDecimals })}`;
+  // v10.2: pinned to en-US so a PC with another regional format can't print "$82 950,00".
+  return `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: maxDecimals })}`;
 }
 
 // NEW (v2): Format large USD amounts as $X.XXB or $X.XXT for readability.
@@ -1187,7 +1201,7 @@ function buildCorrectivePrompt(originalPrompt, failedOutput, reason) {
 
 // v4: Updated to accept key and model params so it matches the provider
 // interface. When called directly (old behavior), falls back to env vars.
-async function callGemini(prompt, key, model) {
+async function callGemini(prompt, key, model, opts = {}) {
   key = key || process.env.GEMINI_API_KEY;
   model = model || GEMINI_MODEL;
   if (!key) return null;
@@ -1202,7 +1216,7 @@ async function callGemini(prompt, key, model) {
   // enough room for thinking plus the (short) post.
   const isNewGen = /gemini-([3-9]|\d{2,})/.test(model);
   const generationConfig = {
-    maxOutputTokens: isNewGen ? 4096 : 800,
+    maxOutputTokens: isNewGen ? (opts.long ? 8192 : 4096) : (opts.long ? 3000 : 800),
     temperature: 0.4,
     topP: 0.9,
   };
@@ -1783,7 +1797,8 @@ async function squareApi(endpoint, apiKey, body, baseUrl = SQUARE_BASE_V2) {
     throw new Error(`Square API returned non-JSON response: ${res.status}`);
   }
   if (json.code !== "000000") {
-    throw new Error(`Square API error [${json.code}]: ${json.message}`);
+    const hint = { "220009": " (daily post limit for the OpenAPI is used up; Binance allows 100 posts/day, resets at 00:00 UTC)", "220014": " (daily image-upload limit used up; Binance allows 400/day)" }[json.code] || "";
+    throw new Error(`Square API error [${json.code}]: ${json.message}${hint}`);
   }
   return json.data;
 }
@@ -2490,7 +2505,7 @@ async function postToSquareWithOptionalImage(text, imageUrl) {
 // news-state/posted.json, committed back by news-post.yml. Dry runs never
 // write it.
 //
-// Env: NEWS_MIN_SCORE (35), NEWS_MAX_AGE_HOURS (6), NEWS_MAX_PER_DAY (12),
+// Env: NEWS_MIN_SCORE (35), NEWS_MAX_AGE_HOURS (6), NEWS_MAX_PER_DAY (40; Binance allows 100 API posts/day in total, shared with every other post type),
 //      NEWS_STATE_FILE, NEWS_EXTRA_FEEDS ("Name|https://url,..."),
 //      NEWS_REQUIRE_AI (true = skip the story instead of using the template
 //      fallback), NEWS_CROSSPOST_X (true = also post to X).
@@ -2669,7 +2684,7 @@ async function runNewsMode() {
     stateFile: process.env.NEWS_STATE_FILE || "news-state/posted.json",
     minScore: envNum("NEWS_MIN_SCORE", 35) || 35,
     maxAgeHours: envNum("NEWS_MAX_AGE_HOURS", 6) || 6,
-    maxPerDay: envNum("NEWS_MAX_PER_DAY", 12) || 12,
+    maxPerDay: envNum("NEWS_MAX_PER_DAY", 40) || 40,
     minGapMin: envNum("NEWS_MIN_GAP_MIN", 5),            // 0 disables the gap
     approvalWaitMin: envNum("NEWS_APPROVAL_WAIT_MIN", 8) || 8,
   };
@@ -2820,6 +2835,7 @@ async function runNewsMode() {
       hashtags,
       maxCashtags: MAX_CASHTAGS_PER_POST,
       maxHashtags: MAX_HASHTAGS_PER_POST,
+      disclaimer: resolveNewsDisclaimer(process.env.NEWS_DISCLAIMER, story.primary.title),
     });
     console.log(`\n--- News post preview (${provider ? `ai: ${provider}` : "template"}) ---\n${text}\n--------------------`);
 
@@ -2850,9 +2866,21 @@ async function runNewsMode() {
 
     // ---- publish ----
     let id = null;
+    // v10.2: attach a 48h price chart (our own, from Binance candles) when the
+    // story's lead coin is one we track. NEWS_CHART=off disables. Any failure
+    // means text-only; publishers' own photos are deliberately NOT reused.
+    let imageUrl = null;
+    const leadSymbol = (cashtags[0] || "").slice(1);
+    if (leadSymbol && DEFAULT_ALERT_COINS.includes(leadSymbol) && !envOff("NEWS_CHART")) {
+      if (dry) console.log(`  [DRY RUN] Would attach a 48h price chart for $${leadSymbol}.`);
+      else {
+        try { imageUrl = await buildPriceChartImage(leadSymbol, null); }
+        catch (err) { console.log(`  Chart skipped (${err.message}) — posting text-only.`); }
+      }
+    }
     if (!dry) {
       try {
-        id = await postToSquareWithOptionalImage(text, null);
+        id = await postToSquareWithOptionalImage(text, imageUrl);
       } catch (err) {
         release("publish failed");
         throw err;
@@ -2924,6 +2952,433 @@ function writeJobSummary({ style, source, aiProvider, text, imageUrl, id, dryRun
 }
 
 // ===========================================================================
+// v10.2 NEW: PRICE ALERTS (RUN_MODE=alerts) — "Bitcoin falls below $83,000"
+// ===========================================================================
+// Data-driven, LLM-written short posts. Binance's public market-data API gives
+// the live price, the 24h stats and recent candles; alerts.mjs decides WHAT
+// happened (a round level crossed, or a big 24h move); the AI only phrases it
+// from those facts (validated), with a plain data template as the fallback.
+// State (what already fired) is shared through git exactly like news, so the
+// PC and GitHub can both run this without double-posting.
+//
+// Env: ALERT_COINS (BTC,ETH,BNB,SOL,XRP,ADA,DOGE,LINK), ALERT_MOVE_PCT (5),
+//   ALERT_LEVEL_PCT (1.25), ALERT_LOOKBACK_MIN (30), ALERT_COIN_COOLDOWN_MIN
+//   (45), ALERT_MAX_PER_DAY (20), ALERT_APPROVAL (all|off; default: all when Telegram is set up, else off), ALERT_CHART
+//   (default on; "off" disables), ALERT_DISCLAIMER (see NEWS_DISCLAIMER).
+// ===========================================================================
+const BINANCE_API_BASE = "https://data-api.binance.vision/api/v3";
+
+function envNumber(name, dflt) {
+  const v = process.env[name];
+  return v !== undefined && v !== "" && Number.isFinite(Number(v)) ? Number(v) : dflt;
+}
+const envOff = (name) => /^(off|false|no|0|none)$/i.test(String(process.env[name] ?? "").trim());
+
+async function fetchBinanceKlines(pair, interval, limit) {
+  const res = await fetch(`${BINANCE_API_BASE}/klines?symbol=${pair}&interval=${interval}&limit=${limit}`, {
+    signal: AbortSignal.timeout(SECONDARY_FETCH_TIMEOUT_MS),
+  });
+  if (!res.ok) throw new Error(`Binance klines error: ${res.status}`);
+  const rows = await res.json();
+  return rows.map((r) => ({ openTime: r[0], open: parseFloat(r[1]), high: parseFloat(r[2]), low: parseFloat(r[3]), close: parseFloat(r[4]) }));
+}
+
+async function fetchAlertSnapshots(symbols, lookbackMin) {
+  const pairs = symbols.map((s) => `${s}USDT`);
+  const res = await fetch(`${BINANCE_API_BASE}/ticker/24hr?symbols=${encodeURIComponent(JSON.stringify(pairs))}`, {
+    signal: AbortSignal.timeout(SECONDARY_FETCH_TIMEOUT_MS),
+  });
+  if (!res.ok) throw new Error(`Binance ticker error: ${res.status}`);
+  const tickers = await res.json();
+  const candles = Math.max(2, Math.ceil(lookbackMin / 5) + 1);
+  return Promise.all(
+    tickers.map(async (t) => {
+      let start = NaN;
+      try {
+        const k = await fetchBinanceKlines(t.symbol, "5m", candles);
+        if (k.length) start = k[0].open;
+      } catch { /* no candles: level detection is skipped for this coin only */ }
+      return {
+        symbol: t.symbol.slice(0, -4),
+        price: parseFloat(t.lastPrice),
+        start,
+        change24h: parseFloat(t.priceChangePercent),
+        high24h: parseFloat(t.highPrice),
+        low24h: parseFloat(t.lowPrice),
+      };
+    }),
+  );
+}
+
+async function renderAndUploadChart(chartConfig) {
+  const png = await renderChartPng(chartConfig);
+  const tmpFile = path.join(os.tmpdir(), `chart-${Date.now()}-${process.pid}.png`);
+  fs.writeFileSync(tmpFile, png);
+  try {
+    return await uploadImageToSquare(process.env.BINANCE_SQUARE_OPENAPI_KEY, tmpFile);
+  } finally {
+    try { fs.unlinkSync(tmpFile); } catch { /* already gone */ }
+  }
+}
+
+// 48h hourly price line (+ the crossed level). Returns an uploaded image URL
+// or null; callers treat any failure as "post text-only".
+async function buildPriceChartImage(symbol, level = null) {
+  const k = await fetchBinanceKlines(`${symbol}USDT`, "1h", 48);
+  const cfg = buildPriceChartConfig({ symbol, closes: k.map((c) => c.close), level, hours: 48 });
+  return cfg ? renderAndUploadChart(cfg) : null;
+}
+
+function parseAlertCoins(v) {
+  const list = String(v || "").split(",").map((x) => x.trim().toUpperCase()).filter((x) => /^[A-Z0-9]{2,10}$/.test(x));
+  return list.length ? [...new Set(list)] : DEFAULT_ALERT_COINS;
+}
+
+// Git-backed shared state for one JSON file (same lock idea as news mode).
+function createSharedState({ file, gitSync, dry, load, save, identity }) {
+  const cwd = process.cwd();
+  let baseTip = null;
+  const resync = () => {
+    const r = pullState(cwd, file);
+    if (r.result === "error") throw new Error(`Could not re-sync shared state (${r.error}).`);
+    baseTip = r.tip;
+  };
+  return {
+    init() {
+      if (!gitSync) return null;
+      if (!gitAvailable(cwd)) {
+        throw new Error("NEWS_GIT_SYNC=true but this folder is not a git clone with an 'origin' remote. Clone the repo, or set NEWS_GIT_SYNC=false (two machines could then duplicate an alert).");
+      }
+      const r = pullState(cwd, file);
+      if (r.result === "error") throw new Error(`Could not read shared state from git (${r.error}). Not posting, to avoid duplicates.`);
+      baseTip = r.tip;
+      return r;
+    },
+    resync,
+    push(message) {
+      if (!gitSync || dry) return "pushed";
+      const r = commitPush(cwd, file, message, { baseTip, ...identity });
+      if (r.tip) baseTip = r.tip;
+      if (r.result === "error") console.log(`  git push error: ${r.error}`);
+      return r.result === "nochange" ? "pushed" : r.result;
+    },
+    update(mutate, message) {
+      for (let i = 0; i < 4; i++) {
+        save(file, mutate(load(file)));
+        const r = this.push(message);
+        if (r === "pushed") return true;
+        if (r === "error") return false;
+        resync();
+      }
+      return false;
+    },
+  };
+}
+
+function writeAlertSummary({ outcome, alert, text, provider, imageUrl, id, dryRun, note }) {
+  const f = process.env.GITHUB_STEP_SUMMARY;
+  if (!f) return;
+  const rows = [["Outcome", outcome]];
+  if (note) rows.push(["Note", note]);
+  if (alert) rows.push(["Alert", `${alert.name} — ${alert.kind === "level" ? `${alert.dir === "down" ? "below" : "above"} ${fmtLevel(alert.level)}` : `${alert.dir} ${Math.abs(alert.change24h).toFixed(1)}% in 24h`} (score ${alert.score})`]);
+  if (text) rows.push(["Written by", provider ? `AI (${provider})` : "data template"], ["Length", `${text.length} chars`], ["Chart attached", imageUrl ? "yes" : "no"]);
+  rows.push(["Dry run", dryRun ? "yes" : "no"]);
+  if (id && id !== "dry-run-id") rows.push(["Post", `[View on Binance Square](https://www.binance.com/square/post/${id})`]);
+  try {
+    fs.appendFileSync(f, ["### Price alert summary", "", "| Field | Value |", "|---|---|", ...rows.map(([k, v]) => `| ${k} | ${v} |`), ""].join("\n"));
+  } catch { /* non-fatal */ }
+}
+
+async function runAlertsMode() {
+  const dry = isDryRun();
+  const cfg = {
+    stateFile: process.env.ALERT_STATE_FILE || "news-state/alerts.json",
+    coins: parseAlertCoins(process.env.ALERT_COINS),
+    movePct: envNumber("ALERT_MOVE_PCT", 5) || 5,
+    levelPct: envNumber("ALERT_LEVEL_PCT", 1.25) || 1.25,
+    lookbackMin: envNumber("ALERT_LOOKBACK_MIN", 30) || 30,
+    coinCooldownMin: envNumber("ALERT_COIN_COOLDOWN_MIN", 45),
+    maxPerDay: envNumber("ALERT_MAX_PER_DAY", 20) || 20,
+    approvalWaitMin: envNumber("ALERT_APPROVAL_WAIT_MIN", 8) || 8,
+  };
+  const gitSync = String(process.env.NEWS_GIT_SYNC).toLowerCase() === "true";
+  const tgOn = telegramConfigured();
+  // Default: ask on Telegram when it is set up (a new feature should not post
+  // unasked); ALERT_APPROVAL=off posts automatically, =all insists on approval.
+  const approvalSetting = String(process.env.ALERT_APPROVAL ?? "").trim().toLowerCase();
+  const wantApproval = approvalSetting === "all" || (approvalSetting === "" && tgOn);
+  console.log(`\n=== PRICE ALERTS (${cfg.coins.length} coins, level ~${cfg.levelPct}%, move ≥${cfg.movePct}%, cap ${cfg.maxPerDay}/day, cooldown ${cfg.coinCooldownMin}min, approval ${wantApproval ? "all" : "off"}${gitSync ? ", git-sync" : ""}${dry ? ", DRY RUN" : ""}) ===`);
+  if (!dry && !process.env.BINANCE_SQUARE_OPENAPI_KEY) throw new Error("Missing BINANCE_SQUARE_OPENAPI_KEY environment variable.");
+  if (wantApproval && !tgOn) {
+    console.log("  ALERT_APPROVAL=all but Telegram is not configured (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID). Not posting.");
+    writeAlertSummary({ outcome: "not posting (approval needs Telegram)", dryRun: dry });
+    return;
+  }
+
+  const identity = { name: process.env.NEWS_GIT_NAME || "square-autoposter-bot", email: process.env.NEWS_GIT_EMAIL || "bot@users.noreply.github.com" };
+  const sync = createSharedState({ file: cfg.stateFile, gitSync, dry, load: loadAlertState, save: saveAlertState, identity });
+  const init = sync.init();
+  if (init) console.log(`  Shared state: ${init.result} (remote ${String(init.tip).slice(0, 7)}).`);
+
+  let snapshots;
+  try {
+    snapshots = await fetchAlertSnapshots(cfg.coins, cfg.lookbackMin);
+  } catch (err) {
+    console.log(`  Could not read Binance prices (${describeFetchError(err)}). Nothing to do this cycle.`);
+    writeAlertSummary({ outcome: "no price data", note: err.message, dryRun: dry });
+    return;
+  }
+
+  let alert, state, nowMs, claimStatus;
+  for (let attempt = 1; ; attempt++) {
+    nowMs = Date.now();
+    state = pruneAlertState(loadAlertState(cfg.stateFile), nowMs);
+    const today = alertsToday(state, nowMs);
+    if (today >= cfg.maxPerDay) {
+      console.log(`  Daily alert cap reached (${today}/${cfg.maxPerDay}). Nothing to do.`);
+      writeAlertSummary({ outcome: `daily cap reached (${today}/${cfg.maxPerDay})`, dryRun: dry });
+      return;
+    }
+    const found = detectAlerts({ snapshots, fired: state.fired, nowMs, lookbackMin: cfg.lookbackMin, cfg: { levelPct: cfg.levelPct, movePct: cfg.movePct, coinCooldownMin: cfg.coinCooldownMin } });
+    if (!found.length) {
+      const glance = snapshots.slice(0, 4).map((s) => `${s.symbol} ${fmtUsd(s.price)} (${s.change24h >= 0 ? "+" : ""}${s.change24h.toFixed(1)}%)`).join(", ");
+      console.log(`  No alert: no round level crossed in ${cfg.lookbackMin} min and no ${cfg.movePct}% move. ${glance}`);
+      writeAlertSummary({ outcome: "quiet market — no alert", note: glance, dryRun: dry });
+      return;
+    }
+    alert = found[0];
+    claimStatus = wantApproval ? "pending" : "posted";
+    console.log(`  Alert (score ${alert.score}): ${alert.id} — price ${fmtUsd(alert.price)}, 24h ${alert.change24h >= 0 ? "+" : ""}${alert.change24h.toFixed(1)}%`);
+    if (dry) break;
+    saveAlertState(cfg.stateFile, recordAlertClaim(state, alert, nowMs, claimStatus));
+    const r = sync.push(`alerts: claim ${alert.id}`);
+    if (r === "pushed") break;
+    if (r === "conflict" && attempt < 3) {
+      console.log(`  Another runner pushed first (attempt ${attempt}); re-reading shared state and re-deciding...`);
+      sync.resync();
+      continue;
+    }
+    if (gitSync) { try { sync.resync(); } catch { /* fall through to the message */ } }
+    console.log(r === "conflict" ? `  Lost the race ${attempt} times; standing down.` : "  Could not record the claim, so not posting (duplicate protection).");
+    writeAlertSummary({ outcome: "standing down (claim not recorded)", alert, dryRun: dry });
+    return;
+  }
+
+  const release = (why) => { if (!dry) sync.update((s) => removeAlertClaim(s, alert), `alerts: release claim (${why})`); };
+  try {
+    // ---- write (AI phrases the facts; template if AI is absent or rejected) ----
+    const facts = alertFacts(alert);
+    let copy = null, provider = null;
+    if (hasAnyAiProvider()) {
+      const ai = await callAiForNews(buildAlertPrompt(alert), facts);
+      if (ai) { copy = ai.copy; provider = ai.provider; }
+    }
+    if (!copy) {
+      console.log("  Using the data template (no validated AI copy).");
+      copy = buildAlertTemplate(alert);
+    }
+    const disclaimer = resolveNewsDisclaimer(process.env.ALERT_DISCLAIMER ?? process.env.NEWS_DISCLAIMER, alert.id);
+    const text = assembleAlertPost({ alert, headline: copy.headline, context: copy.context, disclaimer, hashtags: pickHashtags(`$${alert.symbol}`) });
+    console.log(`\n--- Alert preview (${provider ? `ai: ${provider}` : "template"}) ---\n${text}\n--------------------`);
+
+    // ---- optional human approval ----
+    if (wantApproval) {
+      if (dry) {
+        console.log(`  [DRY RUN] Would send this to Telegram and wait up to ${cfg.approvalWaitMin} min for a tap.`);
+      } else {
+        console.log(`  Sent to Telegram for approval; waiting up to ${cfg.approvalWaitMin} min...`);
+        const verdict = await requestApproval({
+          token: process.env.TELEGRAM_BOT_TOKEN, chatId: process.env.TELEGRAM_CHAT_ID,
+          message: buildAlertApprovalMessage({ text, alert, provider }),
+          id: alert.id.slice(0, 50), waitMs: cfg.approvalWaitMin * 60_000, log: (m) => console.log(`  ${m}`),
+        });
+        console.log(`  Approval result: ${verdict}.`);
+        if (verdict !== "approved") {
+          sync.update((s) => setAlertStatus(s, alert, "skipped"), `alerts: ${verdict}`);
+          writeAlertSummary({ outcome: `not posted (${verdict})`, alert, text, provider, dryRun: dry });
+          return;
+        }
+      }
+    }
+
+    // ---- chart (48h price line + the crossed level) ----
+    let imageUrl = null;
+    if (!envOff("ALERT_CHART")) {
+      if (dry) console.log(`  [DRY RUN] Would attach a 48h price chart for $${alert.symbol}.`);
+      else {
+        try { imageUrl = await buildPriceChartImage(alert.symbol, alert.kind === "level" ? alert.level : null); }
+        catch (err) { console.log(`  Chart skipped (${err.message}) — posting text-only.`); }
+      }
+    }
+
+    // ---- publish ----
+    let id = null;
+    if (!dry) {
+      try {
+        id = await postToSquareWithOptionalImage(text, imageUrl);
+      } catch (err) {
+        release("publish failed");
+        if (/220009/.test(err.message)) {
+          console.log("  Binance's daily API post limit is used up; alerts resume after 00:00 UTC.");
+          writeAlertSummary({ outcome: "paused (Binance daily post limit)", alert, dryRun: dry });
+          return;
+        }
+        throw err;
+      }
+      if (claimStatus === "pending") sync.update((s) => setAlertStatus(s, alert, "posted"), "alerts: posted");
+      console.log(id ? `  SUCCESS — https://www.binance.com/square/post/${id}` : "  Post likely succeeded (no ID returned).");
+    } else {
+      console.log(`  [DRY RUN] Would publish ${text.length} chars${imageUrl ? " + chart" : ""}. Nothing published, state not updated.`);
+    }
+    writeAlertSummary({ outcome: dry ? "dry run" : "posted", alert, text, provider, imageUrl, id, dryRun: dry });
+  } catch (err) {
+    if (!dry && claimStatus === "pending") release("error");
+    else if (!dry && claimStatus === "posted") release("error");
+    throw err;
+  }
+}
+
+// ===========================================================================
+// v10.2 NEW: AI-WRITTEN WEEKLY ARTICLE + TELEGRAM APPROVAL
+// (RUN_MODE=weekly-approve; used by weekly-article-telegram.yml)
+// ===========================================================================
+// 1. Gather the week's data + the headlines this bot posted.
+// 2. The AI writes the article from those facts; validated; template fallback.
+// 3. The WHOLE text is sent to your Telegram, then a Post/Skip message.
+// 4. Tap Post -> it is published to Binance Square (with the chart cover).
+// Nothing is published without your tap. If you don't tap within
+// WEEKLY_APPROVAL_WAIT_MIN (default 240) the draft is kept in weekly-draft.json.
+// ===========================================================================
+function loadWeekHeadlines(file, nowMs = Date.now()) {
+  try {
+    const raw = JSON.parse(fs.readFileSync(file, "utf8"));
+    const seen = new Set();
+    return (raw.posted || [])
+      .filter((e) => e && e.status === "posted" && nowMs - e.at < 7 * 86_400_000 && e.title)
+      .sort((a, b) => b.at - a.at)
+      .filter((e) => { const k = e.title.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; })
+      .map((e) => ({ title: e.title.replace(/\s+[|–—-]\s+[^|–—-]{2,30}$/, ""), source: e.source || "unknown" }));
+  } catch {
+    return [];
+  }
+}
+
+async function callAiForArticle(prompt, facts) {
+  const banned = BANNED_PHRASES.map((p) => p.toLowerCase());
+  for (const provider of orderedProviders()) {
+    const key = process.env[provider.envKey];
+    if (!key) continue;
+    console.log(`  Trying ${provider.name} (${provider.model}) for the article...`);
+    let currentPrompt = prompt;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      let raw;
+      try {
+        raw = await provider.callFn(currentPrompt, key, provider.model, { long: true });
+      } catch (err) {
+        console.log(`  ${provider.name}: ${err.message}`);
+        break;
+      }
+      const article = parseArticleOutput(raw);
+      const verdict = validateArticle(article, facts, banned);
+      if (verdict.ok) {
+        console.log(`  ${provider.name}: article validated (${wordCount(article.body)} words).`);
+        return { article, provider: provider.name };
+      }
+      console.log(`  ${provider.name}: rejected — ${verdict.reason}`);
+      currentPrompt = `${prompt}\n\nYour previous answer was rejected because: ${verdict.reason}.\nWrite the whole article again in the same TITLE:/BODY: layout, fixing that problem.`;
+    }
+  }
+  return null;
+}
+
+async function publishWeeklyArticle({ title, body, dayIndex }) {
+  const data = await getMarketData({ sparkline: true });
+  const featured = rotateSubset(data, MAX_CASHTAGS_PER_POST, dayIndex);
+  const chartConfig = buildWeeklyChartConfig(featured);
+  let coverImageUrl = null;
+  if (chartConfig) {
+    try {
+      coverImageUrl = await renderAndUploadChart(chartConfig);
+      console.log("Chart rendered and uploaded for article cover image.");
+    } catch (err) {
+      console.log(`Chart render/upload failed (${err.message}), publishing without cover image.`);
+    }
+  }
+  const id = await postArticleToSquare(title, body, coverImageUrl);
+  if (id && !isDryRun()) {
+    try {
+      const tweetId = await postToTwitter(`${title}\n\nFull article on Binance Square: https://www.binance.com/square/post/${id}`);
+      if (tweetId) console.log(`Cross-posted teaser to X: https://x.com/i/web/status/${tweetId}`);
+    } catch (e) {
+      console.log(`Twitter cross-post failed (article above still published): ${e.message}`);
+    }
+  }
+  return id;
+}
+
+async function runWeeklyApproveMode(dayIndex) {
+  const dry = isDryRun();
+  console.log(`\n=== WEEKLY ARTICLE (AI-written, Telegram approval)${dry ? " — DRY RUN" : ""} ===`);
+  if (!dry && !process.env.BINANCE_SQUARE_OPENAPI_KEY) throw new Error("Missing BINANCE_SQUARE_OPENAPI_KEY environment variable.");
+  if (!dry && !telegramConfigured()) {
+    throw new Error("Telegram is not configured (TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID). Without it the article cannot be shown to you for approval, so nothing is written or posted.");
+  }
+
+  const data = await getMarketData({ sparkline: true });
+  let anomalies = null, trending = null, globalMarket = null, fng = null;
+  try { anomalies = await getBinanceAnomalies(); } catch (e) { console.log(`Anomaly scan skipped: ${e.message}`); }
+  try { trending = await getTrendingCoins(); } catch (e) { console.log(`Trending fetch skipped: ${e.message}`); }
+  try { globalMarket = await getGlobalMarket(); } catch (e) { console.log(`Global market fetch skipped: ${e.message}`); }
+  try { fng = await getFearGreed(); } catch (e) { console.log(`Fear & Greed fetch skipped: ${e.message}`); }
+
+  const weekRange = getWeekRange();
+  const headlines = loadWeekHeadlines(process.env.NEWS_STATE_FILE || "news-state/posted.json");
+  console.log(`  Data: ${data.filter(Boolean).length} coins, ${headlines.length} headline(s) posted this week.`);
+  const facts = buildArticleFacts({
+    weekRange, globalMarket, fng,
+    watchlist: data.filter(Boolean).map((c) => ({ ...c, name: COIN_NAMES[c.symbol] || c.symbol })),
+    moves: anomalies || [], trending: trending || [], headlines,
+  }, { price: fmtPrice, pct: fmtPct, mcap: fmtMcap });
+
+  let article = null, provider = null;
+  if (hasAnyAiProvider()) {
+    const ai = await callAiForArticle(buildArticlePrompt(facts), facts);
+    if (ai) { article = ai.article; provider = ai.provider; }
+  }
+  if (!article) {
+    console.log("  No validated AI article — using the data template instead.");
+    article = buildWeeklyArticle(data.filter(Boolean), dayIndex, { globalMarket, fng, anomalies, trending });
+    if (!article) throw new Error("Could not build the weekly article (missing CoinGecko data).");
+  }
+  const words = wordCount(article.body);
+  console.log(`\n--- Article: ${article.title} (${words} words, ${provider ? `ai: ${provider}` : "template"}) ---\n${article.body}\n--------------------`);
+
+  const outFile = process.env.DRAFT_OUTPUT_FILE || "weekly-draft.json";
+  fs.writeFileSync(outFile, JSON.stringify({ weekRange, title: article.title, body: article.body, provider }, null, 2));
+  console.log(`Draft saved to ${outFile}.`);
+  if (dry) {
+    console.log("[DRY RUN] Would send the full article to Telegram and wait for your tap. Nothing sent or published.");
+    return;
+  }
+
+  const token = process.env.TELEGRAM_BOT_TOKEN, chatId = process.env.TELEGRAM_CHAT_ID;
+  const sent = await sendTextChunks({ token, chatId, text: `${article.title}\n\n${article.body}` });
+  const waitMin = envNumber("WEEKLY_APPROVAL_WAIT_MIN", 240) || 240;
+  console.log(`Article sent to Telegram in ${sent} message(s). Waiting up to ${waitMin} min for Post/Skip...`);
+  const verdict = await requestApproval({
+    token, chatId, message: buildArticleApprovalMessage({ title: article.title, words, provider }),
+    id: `wk${new Date().toISOString().slice(0, 10).replace(/-/g, "")}`, waitMs: waitMin * 60_000, log: (m) => console.log(m),
+  });
+  console.log(`Approval result: ${verdict}.`);
+  if (verdict !== "approved") {
+    console.log("Not published. The draft remains in weekly-draft.json (the workflow also uploads it as an artifact).");
+    return;
+  }
+  const id = await publishWeeklyArticle({ title: article.title, body: article.body, dayIndex });
+  console.log(id ? `SUCCESS — posted! View at: https://www.binance.com/square/post/${id}` : "Post likely succeeded, but no ID was returned in the response.");
+}
+
+// ===========================================================================
 // MAIN — smart template selection; weekly article handled by separate modes
 // ===========================================================================
 
@@ -2957,6 +3412,13 @@ async function main() {
   // news doesn't take Sundays off.
   if (runMode === "news") {
     return runNewsMode();
+  }
+  // v10.2: price alerts, and the AI-written weekly article with Telegram approval.
+  if (runMode === "alerts") {
+    return runAlertsMode();
+  }
+  if (runMode === "weekly-approve") {
+    return runWeeklyApproveMode(dayIndex);
   }
 
   const key = process.env.BINANCE_SQUARE_OPENAPI_KEY;

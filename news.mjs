@@ -676,6 +676,36 @@ export function validateNewsCopy(copy, srcText, bannedPhrases = []) {
   return { ok: true };
 }
 
+// v10.2: the same grounding rules as validateNewsCopy, for LONG text (the weekly
+// article). Markdown markers are stripped and every line start counts as a
+// sentence start, so headings and bullets don't read as unknown names.
+export function validateGroundedProse(text, srcText, bannedPhrases = []) {
+  const fail = (reason) => ({ ok: false, reason, retryable: true });
+  if (!text || !text.trim()) return fail("empty text");
+  if (/https?:\/\/|www\./i.test(text)) return fail("contains a link");
+  if (/\$[A-Za-z]{2,6}\b/.test(text)) return fail("contains a $ cashtag (write coin names in plain words)");
+  if (/(^|[^#\n])#[A-Za-z0-9]/.test(text)) return fail("contains a hashtag");
+  if (/\p{Extended_Pictographic}/u.test(text)) return fail("contains an emoji");
+  if (/\b(breaking|just in)\b/i.test(text)) return fail("contains BREAKING/JUST IN");
+  const lower = text.toLowerCase();
+  const banned = bannedPhrases.find((p) => lower.includes(p));
+  if (banned) return fail(`contains banned phrase "${banned}"`);
+  if (PREDICTION.test(text)) return fail("contains a price prediction");
+  if (ADVICE.test(text)) return fail("contains trading advice");
+  const q = quantitiesGrounded(text, srcText);
+  if (q) return fail(q);
+  const extraCoins = detectCoins(text).filter((c) => !detectCoins(srcText).includes(c));
+  if (extraCoins.length) return fail(`names a coin not in the data: ${extraCoins.join(", ")}`);
+  const names = [];
+  for (const raw of text.split("\n")) {
+    if (/^\s*#{1,6}\s/.test(raw)) continue; // section headings are Title Case by habit; their numbers/coins are checked above
+    const line = raw.replace(/^[\s>*\-•]+/, "").replace(/[*_`]/g, "");
+    if (line) names.push(...ungroundedNames(line, srcText));
+  }
+  if (names.length) return fail(`contains names not in the data: ${[...new Set(names)].slice(0, 4).join(", ")}`);
+  return { ok: true };
+}
+
 export function truncateAtWord(s, max) {
   if (s.length <= max) return s;
   let cut = s.slice(0, max - 1);
@@ -697,7 +727,38 @@ export function buildNewsTemplate(cluster) {
   return { headline: truncateAtWord(headline.trim(), 200), context: null };
 }
 
-export function assembleNewsPost({ headline, context, sources, score, ageMinutes = 0, cashtags = [], hashtags = [], maxCashtags = 3, maxHashtags = 2 }) {
+// v10.2: news posts had no disclaimer (only the daily market posts did). The
+// line is picked IN CODE from a rotating list (seeded by the story, so it
+// varies from post to post but never gets mangled by the model). Set
+// NEWS_DISCLAIMER to your own text (several options separated by "|" also
+// rotate), or to "off" to remove it.
+export const NEWS_DISCLAIMER_VARIANTS = [
+  "Not financial advice.",
+  "NFA. Do your own research.",
+  "For information only, not advice.",
+  "DYOR. Not investment advice.",
+  "Informational only. Always DYOR.",
+  "Not financial advice. Verify before acting.",
+];
+export const DEFAULT_NEWS_DISCLAIMER = NEWS_DISCLAIMER_VARIANTS[0];
+
+function seedIndex(seed, n) {
+  let h = 5381;
+  for (const ch of String(seed ?? "")) h = ((h * 33) ^ ch.charCodeAt(0)) >>> 0;
+  return h % n;
+}
+
+export function resolveNewsDisclaimer(value, seed = "") {
+  const v = String(value ?? "").trim();
+  if (/^(off|none|false|no|0)$/i.test(v)) return "";
+  const options = v
+    ? v.split("|").map((x) => x.replace(/\s+/g, " ").trim().slice(0, 80)).filter(Boolean)
+    : NEWS_DISCLAIMER_VARIANTS; // unset or empty => the built-in rotation
+  if (!options.length) return DEFAULT_NEWS_DISCLAIMER;
+  return options[seedIndex(seed, options.length)];
+}
+
+export function assembleNewsPost({ headline, context, sources, score, ageMinutes = 0, cashtags = [], hashtags = [], maxCashtags = 3, maxHashtags = 2, disclaimer = "" }) {
   // "BREAKING" on a story that is hours old is a lie, and a freshly started PC
   // runner will find a backlog, so the label depends on age.
   const lead = ageMinutes > 90 ? "📰 NEWS:" : score >= 60 && ageMinutes <= 60 ? "🚨 BREAKING:" : "⚡ JUST IN:";
@@ -705,6 +766,7 @@ export function assembleNewsPost({ headline, context, sources, score, ageMinutes
   if (context) lines.push("", context);
   const shown = sources.slice(0, 2).join(", ");
   lines.push("", `${sources.length > 1 ? "Sources" : "Source"}: ${shown}`);
+  if (disclaimer) lines.push(disclaimer);
   const tagLine = [...cashtags.slice(0, maxCashtags), ...hashtags.slice(0, maxHashtags)].join(" ");
   if (tagLine) lines.push(tagLine);
   return lines.join("\n");

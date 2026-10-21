@@ -19,6 +19,16 @@
       "price": 0.08202,
       "at": 1792573885118,
       "status": "pending"
+    },
+    {
+      "id": "SOL:level:down:107",
+      "symbol": "SOL",
+      "kind": "level",
+      "dir": "down",
+      "level": 107,
+      "price": 106.9,
+      "at": 1792574522387,
+      "status": "pending"
     }
   ]
 }

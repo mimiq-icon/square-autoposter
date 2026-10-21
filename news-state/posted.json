@@ -76,6 +76,14 @@
       "source": "CryptoSlate",
       "at": 1792540242569,
       "status": "posted"
+    },
+    {
+      "title": "Ether ETF outflows continue, pass $1B in October so far",
+      "link": "https://cointelegraph.com/markets/ether-etf-outflows-near-1-1-billion-october?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
+      "source": "Cointelegraph",
+      "at": 1792570613688,
+      "status": "pending",
+      "etfFlow": "ETH"
     }
   ]
 }

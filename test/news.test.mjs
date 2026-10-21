@@ -229,11 +229,13 @@ describe("AI copy: prompt, parse, validate", () => {
   });
 
   test("parseNewsAiOutput handles quotes, NONE and missing headline", () => {
+    // v11: the parser now also reads DETAIL and REACTION lines; both are
+    // null when absent or NONE.
     assert.deepEqual(parseNewsAiOutput('HEADLINE: "SEC clears Grayscale Solana ETF"\nCONTEXT: NONE'), {
-      headline: "SEC clears Grayscale Solana ETF", context: null,
+      headline: "SEC clears Grayscale Solana ETF", context: null, detail: null, reaction: null,
     });
     assert.deepEqual(parseNewsAiOutput("headline: A thing happened today\ncontext: It cost $1.2 billion."), {
-      headline: "A thing happened today", context: "It cost $1.2 billion.",
+      headline: "A thing happened today", context: "It cost $1.2 billion.", detail: null, reaction: null,
     });
     assert.equal(parseNewsAiOutput("Here is your headline!"), null);
   });

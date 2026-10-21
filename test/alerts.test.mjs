@@ -166,3 +166,25 @@ describe("alert state", () => {
     assert.deepEqual(loadAlertState(f), emptyAlertState());
   });
 });
+
+describe("v11.2 extremeMove: images only for violent moves", async () => {
+  const { extremeMove } = await import("../alerts.mjs");
+  const base = { symbol: "BTC", price: 82950, start: 83100, change24h: -1.2, lookbackMin: 30 };
+  test("a quiet level cross is not extreme (text-only post)", () => {
+    assert.equal(extremeMove(base).extreme, false);
+  });
+  test("a big 24h move is extreme, with direction and the 24h label", () => {
+    const r = extremeMove({ ...base, change24h: -8.6 });
+    assert.deepEqual([r.extreme, r.dir, r.label], [true, "down", "in 24h"]);
+  });
+  test("a fast move inside the lookback window is extreme and wins the label", () => {
+    const r = extremeMove({ ...base, start: 80000, price: 83000, change24h: 2 });
+    assert.deepEqual([r.extreme, r.dir, r.label], [true, "up", "in 30 min"]);
+    assert.ok(r.pct > 3);
+  });
+  test("thresholds are configurable and missing data is safe", () => {
+    assert.equal(extremeMove({ ...base, change24h: 5 }, { movePct: 5 }).extreme, true);
+    assert.equal(extremeMove({ symbol: "X" }).extreme, false);
+    assert.equal(extremeMove(undefined).extreme, false);
+  });
+});

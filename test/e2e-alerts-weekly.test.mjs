@@ -22,7 +22,9 @@ function world(seedPosted = []) {
   sh(root, "init", "-q", "--bare", "-b", "main", bare);
   const seed = path.join(root, "seed");
   sh(root, "clone", "-q", bare, seed);
-  for (const f of ["post.mjs", "news.mjs", "news-sync.mjs", "telegram.mjs", "alerts.mjs", "article.mjs"]) fs.copyFileSync(path.join(ROOT, f), path.join(seed, f));
+  // v11.1: post.mjs imports cards.mjs, research.mjs (v11) AND alerts.mjs,
+  // article.mjs (restored v10.2), so a real run needs all of them.
+  for (const f of ["post.mjs", "news.mjs", "news-sync.mjs", "telegram.mjs", "alerts.mjs", "article.mjs", "cards.mjs", "research.mjs"]) fs.copyFileSync(path.join(ROOT, f), path.join(seed, f));
   fs.mkdirSync(path.join(seed, "news-state"));
   fs.writeFileSync(path.join(seed, "news-state/posted.json"), JSON.stringify({ posted: seedPosted }) + "\n");
   const id = ["-c", "user.name=t", "-c", "user.email=t@t"];
@@ -44,7 +46,7 @@ const posts = (w) => lines(w, "SQUARE ");
 
 const GOOD_ALERT = "HEADLINE: Bitcoin drops below $83,000 and now trades at $82,950\nCONTEXT: It is down 1.2% over the past 24 hours.";
 
-test("alerts 1: level cross posts once with AI text, disclaimer, one cashtag and a chart; a rerun does not repost", { skip: !hasGit, timeout: 120000 }, async () => {
+test("alerts 1: a quiet level cross posts once, text-only, with AI text, disclaimer and one cashtag; a rerun does not repost", { skip: !hasGit, timeout: 120000 }, async () => {
   const w = world(); const pc = w.clone("pc");
   const r = await run(pc, w.mocklog, "alerts", { MOCK_AI_TEXT: GOOD_ALERT });
   check("exit 0", r.code === 0, r.out.slice(-700));
@@ -53,11 +55,24 @@ test("alerts 1: level cross posts once with AI text, disclaimer, one cashtag and
   check("AI headline used", text.includes("🔻 Bitcoin drops below $83,000 and now trades at $82,950"), text);
   check("one cashtag, hashtags ≤2", (text.match(/\$[A-Z]{2,6}\b/g) || []).length === 1 && (text.match(/#\w+/g) || []).length <= 2 && /\$BTC #Bitcoin/.test(text), text);
   check("has a disclaimer line", /advice|DYOR|research/i.test(text), text);
-  check("chart attached", lines(w, "IMAGELIST").length === 1, r.out.slice(-500));
+  check("no image on a quiet level cross (images are for extreme moves)", lines(w, "IMAGELIST").length === 0, r.out.slice(-500));
   const st = w.remoteAlerts();
   check("shared state records the claim as posted", st && st.fired.length === 1 && st.fired[0].status === "posted" && st.fired[0].id === "BTC:level:down:83000", JSON.stringify(st));
   const again = await run(pc, w.mocklog, "alerts", { MOCK_AI_TEXT: GOOD_ALERT });
   check("rerun: no second post", again.code === 0 && posts(w).length === 1, again.out.slice(-400));
+});
+
+test("alerts 1b: an extreme move (-9% in 24h) gets an image; ALERT_CHART=off suppresses it; ALERT_CHART=all gives a quiet cross one", { skip: !hasGit, timeout: 180000 }, async () => {
+  const w = world(); const pc = w.clone("pc");
+  const r = await run(pc, w.mocklog, "alerts", { MOCK_AI_TEXT: GOOD_ALERT, MOCK_BTC_CHG: "-9" });
+  check("exit 0", r.code === 0, r.out.slice(-700));
+  check("one post, with an image", posts(w).length === 1 && lines(w, "IMAGELIST").length === 1, r.out.slice(-700));
+  const w2 = world(); const pc2 = w2.clone("pc");
+  const r2 = await run(pc2, w2.mocklog, "alerts", { MOCK_AI_TEXT: GOOD_ALERT, MOCK_BTC_CHG: "-9", ALERT_CHART: "off" });
+  check("off: one post, no image", r2.code === 0 && posts(w2).length === 1 && lines(w2, "IMAGELIST").length === 0, r2.out.slice(-700));
+  const w3 = world(); const pc3 = w3.clone("pc");
+  const r3 = await run(pc3, w3.mocklog, "alerts", { MOCK_AI_TEXT: GOOD_ALERT, ALERT_CHART: "all" });
+  check("all: a quiet cross gets an image", r3.code === 0 && posts(w3).length === 1 && lines(w3, "IMAGELIST").length === 1, r3.out.slice(-700));
 });
 
 test("alerts 2: two machines at once post the alert exactly once", { skip: !hasGit, timeout: 120000 }, async () => {

@@ -25,7 +25,9 @@ function world() {
   sh(root, "init", "-q", "--bare", "-b", "main", bare);
   const seed = path.join(root, "seed");
   sh(root, "clone", "-q", bare, seed);
-  for (const f of ["post.mjs", "news.mjs", "news-sync.mjs", "telegram.mjs", "alerts.mjs", "article.mjs"]) fs.copyFileSync(path.join(ROOT, f), path.join(seed, f));
+  // v11: post.mjs imports cards.mjs and research.mjs, so a real run needs
+  // them in the clone too. v11.1: alerts.mjs and article.mjs as well.
+  for (const f of ["post.mjs", "news.mjs", "news-sync.mjs", "telegram.mjs", "cards.mjs", "research.mjs", "alerts.mjs", "article.mjs"]) fs.copyFileSync(path.join(ROOT, f), path.join(seed, f));
   fs.mkdirSync(path.join(seed, "news-state"));
   fs.writeFileSync(path.join(seed, "news-state/posted.json"), '{"posted":[]}\n');
   const id = ["-c", "user.name=t", "-c", "user.email=t@t"];

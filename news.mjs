@@ -206,13 +206,38 @@ function stem(t) {
   return t.length > 4 && t.endsWith("s") ? t.slice(0, -1) : t;
 }
 
+// v11.1: two headlines can describe one story while scoring 0.40 against the
+// 0.45 cutoff because "$201 million" and "$201M" tokenize differently, and
+// "Solana" and "SOL" produce different tokens. Two normalisation mechanisms,
+// merged from both v11 lineages:
+//  - v10.2's: a digit followed by a unit is normalised to a CANONICAL single
+//    letter ("$201 million" → "201m", "$1.2 billion" → "1.2b"), so unit
+//    spelling merges while MAGNITUDE still separates ("$7M" and "$7B" keep
+//    different tokens — the v11 approach of stripping the suffix entirely
+//    made them identical).
+//  - v11's: every coin detected in the title contributes its canonical
+//    symbol as a token, so a Solana headline and an SOL headline share "sol".
+// Word-level synonyms (sol→solana, btc→bitcoin…) are folded in for the same
+// reason from the text side.
+const SYMBOL_SYNONYMS = { sol: "solana", btc: "bitcoin", eth: "ethereum", ether: "ethereum", doge: "dogecoin" };
+
 export function titleTokens(title) {
   const set = new Set();
-  const cleaned = (title || "").toLowerCase().replace(/[^a-z0-9.\s]/g, " ");
+  const cleaned = (title || "")
+    .toLowerCase()
+    .replace(/(\d)\s*(millions?|mln)\b/g, "$1m")
+    .replace(/(\d)\s*(billions?|bln|bn)\b/g, "$1b")
+    .replace(/(\d)\s*(trillions?|tn)\b/g, "$1t")
+    .replace(/(\d)\s*(thousands?)\b/g, "$1k")
+    .replace(/[^a-z0-9.\s]/g, " ");
   for (const raw of cleaned.split(/\s+/)) {
     const t = raw.replace(/^\.+|\.+$/g, "");
-    if (t.length > 1 && !STOPWORDS.has(t)) set.add(stem(t));
+    if (t.length > 1 && !STOPWORDS.has(t)) {
+      const s = stem(t);
+      set.add(SYMBOL_SYNONYMS[s] || s);
+    }
   }
+  for (const symbol of detectCoins(title || "")) set.add(symbol.toLowerCase());
   return set;
 }
 
@@ -403,6 +428,39 @@ export function isSensitiveStory(cluster) {
   return cluster.items.some((i) => SENSITIVE.test(i.title));
 }
 
+// ---------------------------------------------------------------------------
+// v11: ETF-flow pacing. The dry-run log showed "US Bitcoin ETFs draw $527M"
+// posted, then "BlackRock's IBIT draws $665M" coming through as new four
+// hours later because the numbers differ. Both are the same KIND of story:
+// a daily flows statistic for one coin, and the feed will produce a fresh
+// one every day. So: one ETF-flow story per coin every 10 hours, tracked in
+// the shared state. A "skipped" entry does NOT block (a rejected draft must
+// not silence the next day's flows), a "pending" one does (a draft waiting
+// for your tap is still an offered story).
+// ---------------------------------------------------------------------------
+const ETF_FLOW = /\betfs?\b/i;
+const ETF_FLOW_DIRECTION = /\b(inflows?|outflows?|net flows?|draws?|drew|pulls?|sees? \$)\b/i;
+
+// Returns the single coin symbol the flow story is about, or null.
+export function classifyEtfFlow(title) {
+  if (!ETF_FLOW.test(title || "") || !ETF_FLOW_DIRECTION.test(title || "")) return null;
+  const coins = detectCoins(title);
+  return coins.length === 1 ? coins[0] : null;
+}
+
+export function etfFlowBlock(state, cluster, nowMs, hours = 10) {
+  const coin = classifyEtfFlow(cluster.primary.title);
+  if (!coin) return null;
+  const cutoff = nowMs - hours * 3600 * 1000;
+  const hit = state.posted.find(
+    (p) =>
+      (p.status === "posted" || p.status === "pending") &&
+      p.at >= cutoff &&
+      p.etfFlow === coin
+  );
+  return hit ? `one ETF-flow story for ${coin} was already offered ${Math.round((nowMs - hit.at) / 60000)} min ago (paced to one per ${hours}h)` : null;
+}
+
 export function resolveApprovalMode(value, telegramConfigured) {
   const v = String(value || "").trim().toLowerCase();
   if (v === "off" || v === "sensitive" || v === "all") return v;
@@ -468,11 +526,20 @@ export function dailyCount(state, nowMs) {
   return state.posted.filter((p) => p.status === "posted" && utcDay(p.at) === utcDay(nowMs)).length;
 }
 
-export function recordClaim(state, story, nowMs, status = "posted") {
+export function recordClaim(state, story, nowMs, status = "posted", extra = null) {
   return {
     posted: [
       ...state.posted,
-      { title: story.primary.title, link: story.primary.link || "", source: story.primary.source, at: nowMs, status },
+      {
+        title: story.primary.title,
+        link: story.primary.link || "",
+        source: story.primary.source,
+        at: nowMs,
+        status,
+        // v11: tags the entry with its ETF-flow coin so etfFlowBlock() can
+        // pace flows stories without classifying titles again at read time.
+        ...(extra?.etfFlow ? { etfFlow: extra.etfFlow } : {}),
+      },
     ],
   };
 }
@@ -530,7 +597,7 @@ export function gapBlock(state, nowMs, { minGapMin = 5, pendingWaitMin = 8 } = {
 export function pickNewsStory(
   items,
   state,
-  { nowMs, maxAgeHours = 6, minScore = 35, approvalMode = "off", telegramConfigured = false } = {}
+  { nowMs, maxAgeHours = 6, minScore = 35, approvalMode = "off", telegramConfigured = false, etfFlowHours = 10 } = {}
 ) {
   const fresh = filterFreshNews(items, nowMs, maxAgeHours);
   const clusters = clusterStories(fresh);
@@ -540,12 +607,15 @@ export function pickNewsStory(
       ...scoreStory(c, nowMs),
       posted: isAlreadyPosted(c, state),
       decision: decideNewsAction(c, { approvalMode, telegramConfigured }),
+      // v11: ETF-flow pacing is a soft skip, logged so the run summary shows why.
+      etfBlock: etfFlowBlock(state, c, nowMs, etfFlowHours),
     }))
     .sort((a, b) => b.score - a.score);
   // A held-back story must not block the next best one.
   const choice =
-    ranked.find((r) => !r.posted && r.score >= minScore && (r.decision.action === "post" || r.decision.action === "approve")) ||
-    null;
+    ranked.find(
+      (r) => !r.posted && !r.etfBlock && r.score >= minScore && (r.decision.action === "post" || r.decision.action === "approve")
+    ) || null;
   return { choice, ranked, freshCount: fresh.length, clusterCount: clusters.length };
 }
 
@@ -566,20 +636,27 @@ export function buildNewsPrompt(cluster) {
     ...others.map((o) => `Also reported by ${o.source}: ${o.title}`),
     "=== STORY END ===",
     "",
-    "Write exactly two lines:",
+    // v11: the card carries the headline, so the TEXT post must add something
+    // the card doesn't have. Four lines, each with its own job:
+    "Write exactly four lines:",
     "HEADLINE: one sentence, max 140 characters, present tense, plain words. Say who did what. Rephrase the title in your own words.",
-    "CONTEXT: one short sentence (max 160 characters) adding one relevant fact taken from the summary, or the single word NONE.",
+    "CONTEXT: one short factual sentence (max 160 characters) adding one relevant fact from the summary, or the word NONE. Facts only — no views, estimates or framing.",
+    "DETAIL: one to two short factual sentences (max 280 characters) from the summary that give a reader the story behind the headline, or the word NONE.",
+    "REACTION: one sentence (max 160 characters) that reports a reaction, estimate or opinion ONLY IF the story itself attributes it to a named person, firm or outlet (for example: 'Analyst Min Jung of Presto Labs sees a catch-up trade'), otherwise the word NONE. Never add your own view and never present an opinion as fact.",
     "",
     "Rules:",
     "- Use ONLY facts in the story above. Never add numbers, names, dates, quotes or claims that are not there.",
     "- If the story is a report or claim rather than confirmed, say \"reportedly\" or name who said it.",
+    "- Opinions are allowed ONLY in the REACTION line, ONLY with their owner attached, and ONLY as something the owner says — word it so it stays theirs (said, sees, argues, warned, according to).",
     "- No predictions, no advice to buy/sell/hold, no hype words, no exclamation marks, no emojis, no hashtags, no links, no $ cashtags.",
     "- Do not write the words BREAKING or JUST IN.",
-    "- Output the two lines and nothing else.",
+    "- Output the four lines and nothing else.",
     "",
     "Format example (the facts in it are invented, never reuse them):",
     "HEADLINE: Example Exchange says it will list a new token next week",
     "CONTEXT: Trading opens after an announcement on the exchange's blog.",
+    "DETAIL: The exchange says listings follow a review of the token's market quality. The token rose 4% after the announcement, according to the report.",
+    "REACTION: Analyst Jane Doe of Example Research called the listing quote expected.",
   ].join("\n");
 }
 
@@ -589,10 +666,16 @@ export function parseNewsAiOutput(raw) {
   const h = raw.match(/^\s*HEADLINE:\s*(.+)$/im);
   if (!h) return null;
   const c = raw.match(/^\s*CONTEXT:\s*(.+)$/im);
+  const d = raw.match(/^\s*DETAIL:\s*(.+)$/im);
+  const r = raw.match(/^\s*REACTION:\s*(.+)$/im);
   const headline = unquote(h[1]);
   let context = c ? unquote(c[1]) : null;
   if (!context || /^none\.?$/i.test(context)) context = null;
-  return { headline, context };
+  let detail = d ? unquote(d[1]) : null;
+  if (!detail || /^none\.?$/i.test(detail)) detail = null;
+  let reaction = r ? unquote(r[1]) : null;
+  if (!reaction || /^none\.?$/i.test(reaction)) reaction = null;
+  return { headline, context, detail, reaction };
 }
 
 const UNIT_CLASS = {
@@ -639,18 +722,41 @@ function ungroundedNames(text, srcText) {
   });
   return bad;
 }
+// Exported for the research desk's validator and for unit tests.
+export { quantitiesGrounded, ungroundedNames };
 
 const PREDICTION = /\b(will|going to|set to) (rise|moon|pump|dump|crash|explode|soar|surge|skyrocket|plunge)\b|\bprice (target|prediction)\b/i;
 const ADVICE = /\b(should|must) (buy|sell|hold)\b|\b(buy|sell|hold|accumulate) (now|today|this|before)\b/i;
 
+// v11: the CONTEXT line is for FACTS. A line like "Min Jung suggests investors
+// may prepare for a potential catch-up trade" is somebody's read of the
+// market, not a fact — unattributed speculation on a news account erodes
+// trust fast. Opinions belong in REACTION, with their owner attached, where
+// validateReaction() enforces attribution. Kept as explicit markers rather
+// than a blanket ban on modal verbs, because "the exchange expects to launch"
+// IS a fact about the exchange.
+const CONTEXT_OPINION =
+  /\b(suggests?|suggesting|bets?|betting|hopes?|fears?|bullish|bearish|sentiment|risk-on|risk-off|catch-up|watch for|eyes|positions? for|prepared? for|setup|looks? poised|poised)\b/i;
+
+// A REACTION line is accepted only when the opinion visibly belongs to
+// someone: an attribution verb AND a source that names it (a named person,
+// firm or outlet present in the source text).
+const ATTRIBUTION_VERB =
+  /\b(said|says|saying|according to|sees?|seen by|argues?|argued|expects?|expected by|predicted|predicts?|warned|warns?|noted|notes?|called|calls?|views?|viewed|describes?|estimates?|forecast|forecasts|told|per)\b/i;
+
 export function validateNewsCopy(copy, srcText, bannedPhrases = []) {
   const fail = (reason) => ({ ok: false, reason, retryable: true });
   if (!copy || !copy.headline) return fail("missing HEADLINE line");
-  const { headline, context } = copy;
+  const { headline, context, detail, reaction } = copy;
   if (headline.length < 20 || headline.length > 160) return fail(`headline length ${headline.length} outside 20-160`);
   if (context && context.length > 200) return fail("context longer than 200 characters");
+  if (detail && detail.length > 320) return fail("detail longer than 320 characters");
+  if (reaction && reaction.length > 200) return fail("reaction longer than 200 characters");
+  if (context && CONTEXT_OPINION.test(context)) {
+    return fail("context is an opinion, not a fact — move it to REACTION with a named source, or write NONE");
+  }
 
-  for (const [label, text] of [["headline", headline], ["context", context]]) {
+  for (const [label, text] of [["headline", headline], ["context", context], ["detail", detail]]) {
     if (!text) continue;
     if (/https?:\/\/|www\./i.test(text)) return fail(`${label} contains a link`);
     if (/#\w/.test(text)) return fail(`${label} contains a hashtag`);
@@ -673,12 +779,58 @@ export function validateNewsCopy(copy, srcText, bannedPhrases = []) {
     const names = ungroundedNames(text, srcText);
     if (names.length) return fail(`${label} contains names not in the source: ${names.slice(0, 3).join(", ")}`);
   }
+
+  if (reaction) {
+    const r = validateReaction(reaction, srcText, bannedPhrases);
+    if (!r.ok) return fail(r.reason);
+  }
   return { ok: true };
 }
 
-// v10.2: the same grounding rules as validateNewsCopy, for LONG text (the weekly
-// article). Markdown markers are stripped and every line start counts as a
-// sentence start, so headings and bullets don't read as unknown names.
+// v11: the reasoning structure for third-party opinions. An opinion is fine
+// when it stays somebody else's: name them, verb them, keep the numbers
+// grounded. Anything that reads like the account's own view — or an unnamed
+// "analysts" — is rejected.
+export function validateReaction(reaction, srcText, bannedPhrases = []) {
+  const fail = (reason) => ({ ok: false, reason, retryable: true });
+  if (!ATTRIBUTION_VERB.test(reaction)) {
+    return fail("reaction states an opinion without attributing it (add who said it, e.g. 'X sees...' or 'according to...')");
+  }
+  // Case handling on purpose: "US ETF flows" must not read as the pronoun
+  // "us" (country names are all-caps), but sentence-initial "We think" must
+  // still be caught — so we/our/my are matched case-insensitively, while
+  // "us" only matches lowercase.
+  if (/\b(we|our|ours|my|mine)\b/i.test(reaction) || /\bus\b/.test(reaction) || /\bI\b/.test(reaction)) {
+    return fail("reaction must not speak for the account (no I/we/our)");
+  }
+  if (/\banalysts?\b/i.test(reaction)) {
+    const owned =
+      /\banalysts? (at|of|from)\b/i.test(reaction) ||            // "analysts at Presto"
+      /\b[A-Z][A-Za-z]+ analysts?\b/.test(reaction);              // "Presto analysts"
+    if (!owned) return fail("'analysts' needs a named firm ('analysts at X') so the view has an owner");
+  }
+  if (/https?:\/\/|www\./i.test(reaction)) return fail("reaction contains a link");
+  if (/!/.test(reaction)) return fail("reaction contains an exclamation mark");
+  if (/\p{Extended_Pictographic}/u.test(reaction)) return fail("reaction contains an emoji");
+  if (PREDICTION.test(reaction)) return fail("reaction contains a price prediction");
+  if (ADVICE.test(reaction)) return fail("reaction contains trading advice");
+  const lower = reaction.toLowerCase();
+  const banned = bannedPhrases.find((p) => lower.includes(p));
+  if (banned) return fail(`reaction contains banned phrase "${banned}"`);
+  const q = quantitiesGrounded(reaction, srcText);
+  if (q) return fail(`reaction: ${q}`);
+  const extraCoins = detectCoins(reaction).filter((c) => !detectCoins(srcText).includes(c));
+  if (extraCoins.length) return fail(`reaction names a coin not in the source: ${extraCoins.join(", ")}`);
+  const names = ungroundedNames(reaction, srcText);
+  if (names.length) return fail(`reaction contains names not in the source: ${names.slice(0, 3).join(", ")}`);
+  return { ok: true };
+}
+
+// v11.1 (restored from v10.2, on v11 helpers): long-form grounded-prose
+// validator for the AI-written weekly article (article.mjs). Same contract as
+// validateNewsCopy's per-line checks, but for free prose with markdown:
+// section headings are allowed to be Title Case, and quantities/coins/names
+// must all appear in the facts block the article was written from.
 export function validateGroundedProse(text, srcText, bannedPhrases = []) {
   const fail = (reason) => ({ ok: false, reason, retryable: true });
   if (!text || !text.trim()) return fail("empty text");
@@ -697,7 +849,7 @@ export function validateGroundedProse(text, srcText, bannedPhrases = []) {
   const extraCoins = detectCoins(text).filter((c) => !detectCoins(srcText).includes(c));
   if (extraCoins.length) return fail(`names a coin not in the data: ${extraCoins.join(", ")}`);
   const names = [];
-  for (const raw of text.split("\n")) {
+  for (const raw of String(text).split("\n")) {
     if (/^\s*#{1,6}\s/.test(raw)) continue; // section headings are Title Case by habit; their numbers/coins are checked above
     const line = raw.replace(/^[\s>*\-•]+/, "").replace(/[*_`]/g, "");
     if (line) names.push(...ungroundedNames(line, srcText));
@@ -727,43 +879,42 @@ export function buildNewsTemplate(cluster) {
   return { headline: truncateAtWord(headline.trim(), 200), context: null };
 }
 
-// v10.2: news posts had no disclaimer (only the daily market posts did). The
-// line is picked IN CODE from a rotating list (seeded by the story, so it
-// varies from post to post but never gets mangled by the model). Set
-// NEWS_DISCLAIMER to your own text (several options separated by "|" also
-// rotate), or to "off" to remove it.
+// v10.2: news posts had no disclaimer (only the daily market posts did). Default
+// is a short line; set NEWS_DISCLAIMER to your own text, or to "off" to remove it.
+// v11: the daily posts already rotate their closing line's wording so the
+// account doesn't repeat itself every hour; news posts now do the same. A
+// custom NEWS_DISCLAIMER stays fixed (it's your words, not ours to vary).
+export const DEFAULT_NEWS_DISCLAIMER = "Not financial advice.";
 export const NEWS_DISCLAIMER_VARIANTS = [
   "Not financial advice.",
-  "NFA. Do your own research.",
-  "For information only, not advice.",
-  "DYOR. Not investment advice.",
-  "Informational only. Always DYOR.",
-  "Not financial advice. Verify before acting.",
+  "Not financial advice — for information only.",
+  "Reporting only, not trading advice.",
 ];
-export const DEFAULT_NEWS_DISCLAIMER = NEWS_DISCLAIMER_VARIANTS[0];
-
-function seedIndex(seed, n) {
-  let h = 5381;
-  for (const ch of String(seed ?? "")) h = ((h * 33) ^ ch.charCodeAt(0)) >>> 0;
-  return h % n;
-}
-
-export function resolveNewsDisclaimer(value, seed = "") {
+export function resolveNewsDisclaimer(value) {
   const v = String(value ?? "").trim();
   if (/^(off|none|false|no|0)$/i.test(v)) return "";
-  const options = v
-    ? v.split("|").map((x) => x.replace(/\s+/g, " ").trim().slice(0, 80)).filter(Boolean)
-    : NEWS_DISCLAIMER_VARIANTS; // unset or empty => the built-in rotation
-  if (!options.length) return DEFAULT_NEWS_DISCLAIMER;
-  return options[seedIndex(seed, options.length)];
+  if (!v) return DEFAULT_NEWS_DISCLAIMER; // unset or empty => default
+  return v.replace(/\s+/g, " ").slice(0, 80);
 }
 
-export function assembleNewsPost({ headline, context, sources, score, ageMinutes = 0, cashtags = [], hashtags = [], maxCashtags = 3, maxHashtags = 2, disclaimer = "" }) {
+// Deterministic rotation by any integer seed (run date or hour). Same seed,
+// same disclaimer; different hours rotate through the variants.
+export function pickNewsDisclaimer(seed = 0) {
+  return NEWS_DISCLAIMER_VARIANTS[Math.abs(Math.floor(seed)) % NEWS_DISCLAIMER_VARIANTS.length];
+}
+
+export function assembleNewsPost({ headline, context, detail = null, reaction = null, sources, score, ageMinutes = 0, cashtags = [], hashtags = [], maxCashtags = 3, maxHashtags = 2, disclaimer = "" }) {
   // "BREAKING" on a story that is hours old is a lie, and a freshly started PC
   // runner will find a backlog, so the label depends on age.
   const lead = ageMinutes > 90 ? "📰 NEWS:" : score >= 60 && ageMinutes <= 60 ? "🚨 BREAKING:" : "⚡ JUST IN:";
   const lines = [`${lead} ${headline}`];
+  // v11: the card carries the headline, so the text post gives the reader the
+  // story behind it — detail (facts), then the attributed reaction if one
+  // exists. This is the answer to "can't just repeat the same thing": the
+  // image is the hook, the text is the article.
   if (context) lines.push("", context);
+  if (detail) lines.push("", detail);
+  if (reaction) lines.push("", reaction);
   const shown = sources.slice(0, 2).join(", ");
   lines.push("", `${sources.length > 1 ? "Sources" : "Source"}: ${shown}`);
   if (disclaimer) lines.push(disclaimer);

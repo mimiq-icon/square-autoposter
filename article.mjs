@@ -20,7 +20,8 @@ export function buildArticleFacts({ weekRange, globalMarket, fng, watchlist = []
   if (globalMarket) {
     lines.push(
       `MARKET: total crypto market cap ${fmt.mcap(globalMarket.totalMcap)} (${fmt.pct(globalMarket.mcapChange24h)} in 24h); ` +
-      `Bitcoin dominance ${globalMarket.btcDominance.toFixed(1)}%; 24h trading volume ${fmt.mcap(globalMarket.totalVolume)}`,
+      `Bitcoin dominance ${globalMarket.btcDominance.toFixed(1)}%` +
+      (globalMarket.totalVolume ? `; 24h trading volume ${fmt.mcap(globalMarket.totalVolume)}` : ""),
     );
   }
   if (fng) lines.push(`SENTIMENT: Fear & Greed Index ${fng.value}/100 (${fng.classification})`);

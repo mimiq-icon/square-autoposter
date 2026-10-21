@@ -202,10 +202,21 @@ export function assembleAlertPost({ alert, headline, context, disclaimer = "", h
 
 // QuickChart (Chart.js v2) config: a price line over the recent candles, with
 // the crossed level drawn as a dashed line when there is one.
+// Candle size for a chart spanning `hours` (Binance kline intervals).
+export function chartWindow(hours) {
+  const h = Math.min(720, Math.max(6, Math.round(Number(hours) || 24)));
+  if (h <= 24) return { hours: h, interval: "15m", limit: h * 4 };
+  if (h <= 72) return { hours: h, interval: "1h", limit: h };
+  if (h <= 24 * 14) return { hours: h, interval: "4h", limit: Math.ceil(h / 4) };
+  return { hours: h, interval: "1d", limit: Math.ceil(h / 24) };
+}
+
 export function buildPriceChartConfig({ symbol, closes, level = null, hours = 48 }) {
   if (!Array.isArray(closes) || closes.length < 2) return null;
   const n = closes.length;
-  const labels = closes.map((_, i) => (i === n - 1 ? "now" : `-${Math.round(((n - 1 - i) / (n - 1)) * hours)}h`));
+  const ago = (i) => ((n - 1 - i) / (n - 1)) * hours;
+  const labels = closes.map((_, i) => (i === n - 1 ? "now" : hours > 48 ? `-${Math.round(ago(i) / 24)}d` : `-${Math.round(ago(i))}h`));
+  const span = hours >= 48 && hours % 24 === 0 ? `${hours / 24} days` : `${hours}h`;
   const datasets = [{
     label: `$${symbol} price (USD)`, data: closes, borderColor: "#F0B90B", backgroundColor: "transparent",
     borderWidth: 3, pointRadius: 0, tension: 0.15,
@@ -220,7 +231,7 @@ export function buildPriceChartConfig({ symbol, closes, level = null, hours = 48
     type: "line",
     data: { labels, datasets },
     options: {
-      title: { display: true, text: `$${symbol} - last ${hours}h` },
+      title: { display: true, text: `$${symbol} - last ${span}` },
       legend: { display: true, position: "bottom" },
       scales: { xAxes: [{ ticks: { maxTicksLimit: 6 } }] },
     },
@@ -277,4 +288,22 @@ export function alertsToday(state, nowMs) {
   const d = new Date(nowMs);
   const startOfDay = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
   return state.fired.filter((f) => (f.status === "posted" || f.status === "pending") && f.at >= startOfDay).length;
+}
+
+// ---------------------------------------------------------- extreme moves --
+// Most alerts are text-only: a level cross at -1.2% does not need a picture.
+// An image is for violent moves: |24h change| >= movePct, or a fast move
+// (start of the lookback window -> now) >= flashPct. Pure; no network.
+// Returns { extreme, dir, pct, label }, where pct/label describe the number
+// that qualified (the fast move wins when both qualify: it is the news).
+export function extremeMove(alert, { movePct = 8, flashPct = 3 } = {}) {
+  const day = Number.isFinite(alert?.change24h) ? alert.change24h : NaN;
+  const fast = alert?.start > 0 && alert?.price > 0 ? ((alert.price - alert.start) / alert.start) * 100 : NaN;
+  if (Number.isFinite(fast) && Math.abs(fast) >= flashPct) {
+    return { extreme: true, dir: fast < 0 ? "down" : "up", pct: fast, label: `in ${alert.lookbackMin || 30} min` };
+  }
+  if (Number.isFinite(day) && Math.abs(day) >= movePct) {
+    return { extreme: true, dir: day < 0 ? "down" : "up", pct: day, label: "in 24h" };
+  }
+  return { extreme: false, dir: null, pct: null, label: "" };
 }

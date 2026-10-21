@@ -2,7 +2,9 @@
 
 Your Windows 11 PC (i5-8365U, 8 GB RAM, no GPU) is plenty for this. The PC checks the news feeds every ~2.5 minutes and writes posts with a small local AI model. GitHub keeps running hourly in the background, so **the PC does not need to be on 24/7**; when it's off or asleep, GitHub carries on.
 
-Before you start, you need these in the repo (upload the v10.2 files to GitHub and commit; v10.2 replaced the retired Groq and Gemini default models, see CHANGELOG.md): `post.mjs`, `news.mjs`, `news-sync.mjs`, `telegram.mjs`, `local-runner.mjs`, `start-news.bat`, `.env.example`, `.gitignore`, `.github/workflows/news-post.yml`.
+Before you start, you need these in the repo (upload the v11.1 files to GitHub and commit; v11 added the card engine and the education/research desk, v11.1 restored price alerts and the AI weekly article, see CHANGELOG.md): `post.mjs`, `news.mjs`, `cards.mjs`, `research.mjs`, `alerts.mjs`, `article.mjs`, `news-sync.mjs`, `telegram.mjs`, `local-runner.mjs`, `start-news.bat`, `.env.example`, `.gitignore`, `.github/workflows/news-post.yml`.
+
+The PC runner also checks prices for **alerts** ("Bitcoin falls below $83,000") in the same cycle, and every alert can wait for your Telegram tap (set the `TELEGRAM_*` values in `.env`; `ALERT_APPROVAL=off` posts them automatically). If a coin just moved sharply, that cycle takes a few seconds longer.
 
 ## 1. Install three programs
 
@@ -72,7 +74,17 @@ With this, risky stories (hacks, thefts, arrests, bankruptcies, depegs, bans) ar
 
 Want to approve *every* post? Add `NEWS_APPROVAL=all`. Without Telegram, risky stories are only posted once two outlets (or an official source like the SEC) carry them.
 
-## 6. Test it, then start it
+## 6. One-time install for the news cards (v11)
+
+Every news post ships with a branded card image. The card is drawn in code (no design tools); one small native library turns the SVG into a PNG for upload. In the repo folder:
+
+```
+npm install --no-save @resvg/resvg-js
+```
+
+That's it — it installs into `node_modules` (git-ignored) and the bot picks it up automatically. Without it, posts still go out, just without the image (the log says so). Repeat this once after a fresh clone.
+
+## 7. Test it, then start it
 
 ```
 node local-runner.mjs --check
@@ -83,7 +95,7 @@ node local-runner.mjs --dry-run --once
 
 When it looks right, double-click **`start-news.bat`**. A window opens and stays open; it logs each cycle and also writes `logs\news.log`. Close the window to stop it.
 
-## 7. Start automatically when you sign in
+## 8. Start automatically when you sign in
 
 Settings are in **Task Scheduler** → Create Basic Task → name `Square news runner` → trigger **When I log on** → action **Start a program** → browse to `start-news.bat`. Or in PowerShell (edit the path):
 
@@ -95,7 +107,7 @@ To keep it running while you're away: Settings → System → Power → Screen a
 
 ## How the PC and GitHub avoid double-posting
 
-Before publishing, each runner records a "claim" on the story in `news-state/posted.json` and pushes it. Git refuses the second push, so whoever loses the race sees the other's claim and moves on. Two further rules: a minimum gap between posts (`NEWS_MIN_GAP_MIN`, default 5 minutes) and a daily cap (`NEWS_MAX_PER_DAY`, default 12), both counted across both machines. If publishing fails, the claim is released and the story is retried.
+Before publishing, each runner records a "claim" on the story in `news-state/posted.json` and pushes it. Git refuses the second push, so whoever loses the race sees the other's claim and moves on. Two further rules: a minimum gap between posts (`NEWS_MIN_GAP_MIN`, default 5 minutes) and a daily cap (`NEWS_MAX_PER_DAY`, default 40; set it lower in `.env` if you want fewer posts), both counted across both machines. If publishing fails, the claim is released and the story is retried.
 
 If the PC can't reach GitHub when it starts a cycle, it **doesn't post** rather than risk a duplicate.
 
@@ -126,10 +138,3 @@ git pull
 ## What you're trusting
 
 The bot reports what the outlets report. A wrong story in a feed can become a wrong post. The checks (importance bar, two outlets for risky claims, fact-checker on rewrites, optional tap) reduce that; they don't make it zero. For the most control, use `NEWS_APPROVAL=all`.
-
-
-## v10.2: what else the runner does now
-
-- **Price alerts** are checked every cycle after the news check (log line `alerts ok in Ns`). With Telegram set up they ask for your tap first; add `ALERT_APPROVAL=off` to `.env` to auto-post, or `ALERTS_ENABLED=off` to switch them off.
-- **A line in `.env` that starts with `#` is a comment and does nothing.** To turn a setting on, type it on a new line WITHOUT the `#`, for example `NEWS_APPROVAL=all`, then save. The first line of a run, `NEWS MODE (... approval all ...)`, shows what was actually loaded.
-- New files must be in your clone: after uploading to GitHub run `git fetch origin` then `git reset --hard origin/main`.

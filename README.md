@@ -2,15 +2,17 @@
 
 A zero-cost crypto content bot for [Binance Square](https://www.binance.com/en/square), driven by GitHub Actions. No server needed — set the secrets below from your phone and it runs itself. Optionally, a Windows/Mac/Linux PC can run a faster breaking-news loop with a local AI model (see **[PC-SETUP.md](PC-SETUP.md)**); GitHub stays on as the always-on backup.
 
-It fetches live market data from free, no-key sources, writes varied posts (rotating templates + a multi-provider AI chain with template fallback), and publishes them through Binance's official Square OpenAPI. A companion scanner reads (never posts) trend/competitor/comment data through an unofficial CLI, entirely off the critical path.
+It fetches live market data from free, no-key sources, writes varied posts (rotating templates + a multi-provider AI chain with template fallback), and publishes them through Binance's official Square OpenAPI. Every post carries a branded image drawn in code (`cards.mjs`). A second content line (`research.mjs`) runs the education & research desk: short explainers through the week and one long-form article a month, all written only from fetched facts. A companion scanner reads (never posts) trend/competitor/comment data through an unofficial CLI, entirely off the critical path.
 
 ## What it does
 
 - **Daily post** (`daily-post.yml`, 08:30 UTC) — one of 9 rotating content styles (snapshot, top mover, educational, weekly recap, macro overview, anomaly radar, trending today, market sentiment, top-100 digest, coin spotlight), each also rotated against 5 "vibes" (tone/angle). Tries an AI provider chain first (Groq → OpenRouter → Gemini), falls back to a hand-written template if all three fail or produce something that doesn't pass validation. Always attaches a rendered 24h price chart when possible. Philosophy: **post something rather than skip a day.**
-- **Breaking news** (`news-post.yml`, hourly on GitHub; `local-runner.mjs`, every ~2.5 min on your PC) — Watcher-Guru-style wire posts. Reads crypto RSS feeds (CoinDesk, Cointelegraph, Decrypt, The Block, Bitcoin Magazine, CryptoSlate) plus the SEC and Federal Reserve press-release feeds (filtered to crypto/macro items), merges the same story across outlets, scores importance (confirmed by multiple outlets, an official source, high-impact keywords like SEC/ETF/hack/Fed, freshness), and posts **at most one story per run — and nothing at all in a quiet hour**. The AI rewrites the headline, but a validator rejects any number, unit, name or coin that isn't in the source story; on rejection it falls back to the cleaned original headline. Every post names its source. Hacks, thefts, arrests, bankruptcies, depegs and bans are **never posted on one outlet's word alone**, and can optionally need your one-tap approval on Telegram. A git-based claim lock means the PC and GitHub never post the same story twice.
-- **Weekly article** (`weekly-article-draft.yml` + `weekly-article-publish.yml`, Sundays) — a long-form recap with a chart, drafted automatically as a GitHub Issue and published **only after a human labels the issue `approved-for-posting`**. This is the one human-in-the-loop gate in the system, and it fails loudly rather than silently substituting different content if anything's wrong.
+- **Breaking news** (`news-post.yml`, hourly on GitHub; `local-runner.mjs`, every ~2.5 min on your PC) — Watcher-Guru-style wire posts. Reads crypto RSS feeds (CoinDesk, Cointelegraph, Decrypt, The Block, Bitcoin Magazine, CryptoSlate) plus the SEC and Federal Reserve press-release feeds (filtered to crypto/macro items), merges the same story across outlets, scores importance (confirmed by multiple outlets, an official source, high-impact keywords like SEC/ETF/hack/Fed, freshness), and posts **at most one story per run — and nothing at all in a quiet hour**. Every post ships with a branded **news card** image (alert cards for sharp single-coin moves). The AI writes four lines — headline, factual context, factual detail, and an attributed reaction — and a validator rejects any number, unit, name or coin that isn't in the source story; on rejection it falls back to the cleaned original headline. Opinions are allowed only as reactions with their owner attached. ETF-flow stories are paced to one per coin per 10 hours so a daily flows stat can't double-post. Hacks, thefts, arrests, bankruptcies, depegs and bans are **never posted on one outlet's word alone**, and can optionally need your one-tap approval on Telegram. A git-based claim lock means the PC and GitHub never post the same story twice.
+- **Price alerts** (`local-runner.mjs` every cycle on the PC; `alert-post.yml` manual on GitHub by default) — "Bitcoin falls below $83,000" / "Ether is up 7.3% in 24 hours". Binance's public ticker decides what happened (a round level crossed in the last ~30 min, or a ≥5% 24h move); the AI only phrases it from those validated facts, with a plain data template as fallback. Every alert carries the branded **alert card** (big price, 24h range bar, price line with the crossed level dashed); a plain price chart is the fallback when the PNG renderer isn't installed. Cooldowns per coin/level, a 20/day cap, and the same git claim lock as news — the PC and GitHub never double-alert. With Telegram configured, each alert waits for your one-tap approval.
+- **Education & research** (`research-post.yml`, Tue/Fri + first Saturday) — short, data-grounded explainers ("What is TVL?", "Why Bitcoin fees move", "DeFi in numbers today") written ONLY from facts fetched from free sources (DefiLlama, mempool.space, Wikipedia), each with an explainer-slide image, each sent to your Telegram for a one-tap approval before publishing. On the **first Saturday of the month** the same desk produces a long-form research article (sections assembled mechanically from the facts, so their numbers are grounded by construction). A skipped topic is never posted ungrounded.
+- **Weekly article** (`weekly-article-telegram.yml`, Sundays 07:30 UTC) — the AI writes the recap from a facts block (market stats, majors' 7-day moves, the headlines this bot posted during the week, each with its publisher), a validator rejects anything the facts don't support, the **whole article is sent to your Telegram**, and it's published — with a branded cover image — **only when you tap Post**. No tap within `WEEKLY_APPROVAL_WAIT_MIN` (default 240 min) = not posted; the draft is kept as an artifact. (The older issue-and-label flow, `weekly-article-draft.yml` + `weekly-article-publish.yml`, still works for manual runs.)
 - **Top movers digest** (`top-movers-digest.yml`, 14:00 UTC) — a second, distinct daily post: top-100 breadth (best gainer / worst loser / % green).
-- **Scanner** (`trend-scan.yml`, `competitor-scan.yml`, `comment-digest.yml`) — read-only intel via an unofficial headless CLI ([`binance-square-cli`](https://github.com/QuantProcessing/binance-square-cli), pinned to a specific commit). Opens a GitHub Issue with findings; never posts anything itself. See **Risks** below.
+- **Scanner** (`trend-scan.yml`, `competitor-scan.yml`, `comment-digest.yml`) — read-only intel via an unofficial headless CLI ([`binance-square-cli`](https://github.com/QuantProcessing/binance-square-cli), pinned to a specific commit). Opens a GitHub Issue with findings; never posts anything itself. See **Risks** below. (v11: the trend-scan and competitor-scan *schedules are off* — Binance blocks the scraper from GitHub's IPs; manual runs still work.)
 - **Weekly balance check** (`weekly-balance-check.yml`) — housekeeping (see the workflow file for specifics).
 - **Tests** (`test.yml`) — runs the unit and end-to-end suite (`node --test`) on every push/PR touching the source or `test/`.
 
@@ -51,6 +53,9 @@ Model overrides (all optional, sane defaults baked in): `GROQ_MODEL`, `OPENROUTE
 | `weekly-draft` | Gathers data, builds the article + a chart preview link, opens/updates a GitHub Issue. Zero Binance calls. |
 | `weekly-publish` | Reads the (possibly human-edited) approved issue, uploads the real chart, publishes for real. Fails loudly rather than substituting different content. |
 | `news` | Picks the single best fresh story from the feeds and posts it (or posts nothing). Run hourly by GitHub and continuously by `local-runner.mjs`. See below. |
+| `alerts` | Checks Binance prices for level crossings and big 24h moves; posts at most one alert, with the branded alert card. Run by the PC runner every cycle; `alert-post.yml` on GitHub is manual by default. |
+| `research` | The education & research desk: picks a topic by rotation, fetches its facts (DefiLlama / mempool.space / Wikipedia), writes from those facts only, validates, asks on Telegram, publishes. `RESEARCH_MODE=auto` posts a short explainer and — on the first Saturday of the month — a long-form article instead. |
+| `weekly-approve` | Writes the AI weekly article from facts, sends the full text to Telegram, publishes only on your Post tap (used by `weekly-article-telegram.yml`). |
 
 Diagnostics: `DRY_RUN=true` (print, don't post — covers every code path, including image upload), `DAY_INDEX_OVERRIDE=<1-31>` (test a specific vibe/template rotation on demand).
 
@@ -62,8 +67,11 @@ GitHub runs it from `news-post.yml` every hour. Manual runs default to **dry run
 |---|---|---|
 | `NEWS_MIN_SCORE` | 35 | Importance bar. Lower = more posts, higher = only big stories. The run log lists the top 5 candidates with the reason for each score, so tune from real runs. |
 | `NEWS_MAX_AGE_HOURS` | 6 | Ignore stories older than this. |
-| `NEWS_MAX_PER_DAY` | 12 | Hard daily cap (UTC day), shared by the PC and GitHub. |
+| `NEWS_MAX_PER_DAY` | 40 | Hard daily cap (UTC day), shared by the PC and GitHub. |
 | `NEWS_MIN_GAP_MIN` | 5 | Minimum minutes between two posts, shared by the PC and GitHub (`0` = off). |
+| `NEWS_CARDS` | true | Branded card image on every news post (`false` = text-only). PNG rendering needs the one-time `npm install --no-save @resvg/resvg-js` (the workflows do it; the PC setup covers it too). |
+| `ALERT_CHART_HOURS` | 24 | Window for the alert card's price range. |
+| `CARD_SCALE` | 2 | PNG render multiplier (2 = 2160×2160 for a 1080 card). |
 | `NEWS_REQUIRE_AI` | false | `true` = skip a story rather than post the plain-headline fallback. |
 | `NEWS_EXTRA_FEEDS` | none | Add feeds without editing code: `Name|https://url,Name2|https://url2`. |
 | `NEWS_APPROVAL` | `sensitive` if Telegram is set up, else `off` | `off` / `sensitive` / `all`. Which stories wait for your tap on Telegram. |
@@ -93,6 +101,9 @@ flowchart TD
         CG[CoinGecko markets/trending/global]
         FG[Alternative.me Fear & Greed]
         BN[Binance 24h ticker]
+        LL[DefiLlama protocols / DEX volumes]
+        MP[mempool.space fees / hashrate]
+        WK[Wikipedia summary extracts]
     end
 
     subgraph Writer["Writer stage"]
@@ -103,21 +114,31 @@ flowchart TD
     Data --> Writer
     AI -- "validated, or all 3 fail" --> TPL
     Writer --> Guard["Length / cashtag / hashtag guards"]
-    Guard --> Chart["Optional rendered chart (quickchart.io)"]
-    Chart --> Square["Binance Square OpenAPI"]
+    Guard --> Cards["cards.mjs: branded SVG -> PNG (optional resvg)"]
+    Cards --> Square["Binance Square OpenAPI"]
     Square -.optional, same voice.-> X["X / Twitter"]
 
     subgraph News["news.mjs (RUN_MODE=news)"]
-        RSS["Crypto RSS + SEC / Fed feeds"] --> Pick["Cluster, score, sensitive-claim rule"]
+        RSS["Crypto RSS + SEC / Fed feeds"] --> Pick["Cluster, score, sensitive-claim rule, ETF-flow pacing"]
         Pick --> Claim["Claim story in news-state via git push"]
-        Claim --> Rewrite["AI rewrite (Ollama / cloud) + fact validator, else plain headline"]
+        Claim --> Rewrite["AI: HEADLINE / CONTEXT / DETAIL / REACTION + fact validator, else plain headline"]
         Rewrite --> Approve{"Needs approval?"}
-        Approve -- "yes: Telegram tap" --> Publish["Publish"]
+        Approve -- "yes: Telegram tap" --> Publish["Publish + news/alert card"]
         Approve -- no --> Publish
     end
     PC["PC: local-runner.mjs, every ~2.5 min"] --> News
     GH["GitHub: news-post.yml, hourly backup"] --> News
     Publish --> Square
+
+    subgraph Research["research.mjs (RUN_MODE=research)"]
+        Topic["Topic rotation (no repeat within a cycle)"] --> Facts["gatherFacts: DefiLlama / mempool / Wikipedia"]
+        Facts --> RWrite["AI: HOOK / BODY / TAKEAWAY / QUESTION from facts only"]
+        RWrite --> RVal["validateResearchCopy: quantities, coins, advice, opinion"]
+        RVal --> RTap["Telegram one-tap approval of the full text"]
+        RTap --> RPublish["Short post + explainer slide, or monthly article + cover"]
+    end
+    RSched["GitHub: research-post.yml, Tue/Fri + first Saturday"] --> Research
+    RPublish --> Square
 
     subgraph Scanner["scan.mjs (read-only, off the critical path)"]
         CLI[unofficial binance-square-cli]
@@ -137,25 +158,17 @@ flowchart TD
 
 Every daily-post run writes a **Job Summary** (visible in the Actions run's "Summary" tab, no extra clicks) with: style used, source (AI provider or template/fallback), character count, cashtags, hashtags, whether a chart was attached, dry-run status, and a link to the published post if successful. The scanner workflows write a one-line health status (OK / blocked) the same way.
 
-## v10.2 additions: alerts, charts, AI-written weekly article
-
-**Price alerts** (`alerts.mjs`, `RUN_MODE=alerts`). Binance's public prices decide what happened (a round level such as $83,000 was crossed, or a coin moved 5%+ in 24 hours); the AI only phrases it from those facts, validated like news copy, with a data-only template as the fallback; a 48-hour price chart is attached. The PC runner checks every cycle. By default it asks for your Telegram tap when Telegram is set up (`ALERT_APPROVAL=off` to auto-post). `alert-post.yml` can also run it on GitHub (schedule off by default). Alerts and news share the git-based claim lock, so two machines never post the same alert.
-
-**News posts** now end with a rotating short disclaimer (`NEWS_DISCLAIMER`), attach a price chart when the story's lead coin is tracked (`NEWS_CHART=off`), and the daily cap is 40 (`NEWS_MAX_PER_DAY`; Binance allows 100 API posts per day and 400 image uploads per day in total).
-
-**Weekly article** (`article.mjs`, `weekly-article-telegram.yml`, Sundays 07:30 UTC). The AI writes it from real data plus the headlines the bot posted that week; every number, coin and name is checked against those facts and the data template is the fallback. The full text arrives in your Telegram and is published only when you tap Post. The old issue + label flow (`weekly-article-draft.yml`) is now manual-only.
-
 ## Testing
 
 ```
 node --test
 ```
 
-No `npm install` needed. The suite covers the pure functions (formatters, template builders, the AI-output validation gate, cashtag/hashtag logic, OAuth 1.0a signing, news clustering/scoring/validation, the Telegram approval flow against a fake server, the git claim lock against real local git remotes) with no real network calls.
+No `npm install` needed. The suite covers the pure functions (formatters, template builders, the AI-output validation gates — news AND research AND the weekly article — the card engine, cashtag/hashtag logic, OAuth 1.0a signing, news clustering/scoring/validation, ETF-flow pacing, opinion-attribution rules, alert level/move detection and cooldowns, the research topic engine and fact parsers, the Telegram approval flow against a fake server, the git claim lock against real local git remotes) with no real network calls. **323 tests.**
 
-`test/e2e-news.test.mjs` also runs the real `post.mjs` in news mode as two "machines" at once against a local bare git repo, with `fetch` mocked (`test-support/mock-fetch.mjs`), and asserts exactly one post comes out — plus the Telegram approve/reject/timeout paths, local-model fallback, publish-failure claim release and feed caching. It needs `git` installed and is skipped without it.
+`test/e2e-news.test.mjs` also runs the real `post.mjs` in news mode as two "machines" at once against a local bare git repo, with `fetch` mocked (`test-support/mock-fetch.mjs`), and asserts exactly one post comes out — plus the Telegram approve/reject/timeout paths, local-model fallback, publish-failure claim release and feed caching. `test/e2e-alerts-weekly.test.mjs` does the same for alerts (two machines, one alert, cooldown rerun, the AI-invents-a-number rejection, the 220009 daily-limit path) and the weekly article (full-text Telegram approval, invented-number fallback to the template, dry run). Both need `git` installed and are skipped without it.
 
-What the tests **cannot** prove: live feed URLs and formats, how fast your CPU runs a local model, and real Telegram behaviour. Do a `--dry-run` first (see PC-SETUP.md).
+What the tests **cannot** prove: live feed URLs and formats (news feeds, DefiLlama, mempool.space, Wikipedia), how fast your CPU runs a local model, real card rendering with system fonts, and real Telegram behaviour. Do a `--dry-run` first (see PC-SETUP.md).
 
 The scanner (`scan.mjs`) and the daily-post network paths are still not covered.
 

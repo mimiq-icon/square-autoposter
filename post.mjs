@@ -1,7 +1,13 @@
-// post.mjs  (v9 — upgraded)
+// post.mjs  (v11.1 — the media desk, completed)
 // ============================================================================
 // Fetches live crypto data from MULTIPLE free, no-key sources and posts to
 // Binance Square with $cashtags.
+//
+// v11.1: completes the v11 media-desk build. The v11 zip was cut from a stale
+// tree and had silently lost the v10.2 session's afternoon work; this file
+// merges both lineages: the card engine + research desk + four-line news
+// writer from v11, and the price alerts + AI-written weekly article +
+// Telegram approval + data sanity fixes from v10.2.
 //
 // What's new in v9 (vs v8):
 //   - NEW: Two more rotation styles — "digest" (top-100 breadth: best
@@ -95,18 +101,30 @@ import {
   recordClaim, setEntryStatus, removeClaim, gapBlock, resolveApprovalMode,
   pickNewsStory, buildNewsPrompt, parseNewsAiOutput, validateNewsCopy,
   buildNewsTemplate, assembleNewsPost, resolveNewsDisclaimer, detectCoins,
+  // v11: ETF-flow pacing, richer text posts, rotating disclaimers
+  classifyEtfFlow, pickNewsDisclaimer,
 } from "./news.mjs";
+import { telegramConfigured, buildApprovalMessage, requestApproval, storyId, buildAlertApprovalMessage, buildArticleApprovalMessage, sendTextChunks } from "./telegram.mjs";
+import { gitAvailable, pullState, commitPush } from "./news-sync.mjs";
+// v11: the card engine (SVG builders + optional PNG renderer) and the
+// education/research desk live in their own modules so both stay pure and
+// unit-testable; this file owns all I/O for them.
 import {
-  telegramConfigured, buildApprovalMessage, requestApproval, storyId,
-  buildAlertApprovalMessage, buildArticleApprovalMessage, sendTextChunks,
-} from "./telegram.mjs";
+  buildNewsCardSvg, buildAlertCardSvg, buildExtremeAlertCardSvg, buildExplainerSlideSvg, buildArticleCoverSvg,
+  buildBarChartSvg, buildStatGridSvg, buildLineChartSvg, renderSvgToPng,
+} from "./cards.mjs";
+import {
+  RESEARCH_TOPICS, pickResearchTopic, gatherFacts, buildResearchPrompt,
+  parseResearchAiOutput, validateResearchCopy, assembleResearchPost,
+  buildResearchArticleMarkdown, computeDexShares, isFirstSaturday,
+} from "./research.mjs";
+// v10.2 (restored in v11.1): price alerts and the AI-written weekly article.
 import {
   DEFAULT_ALERT_COINS, COIN_NAMES, detectAlerts, alertFacts, buildAlertPrompt, buildAlertTemplate,
-  assembleAlertPost, buildPriceChartConfig, fmtUsd, fmtLevel, loadAlertState, saveAlertState,
+  extremeMove, assembleAlertPost, buildPriceChartConfig, chartWindow, fmtUsd, fmtLevel, loadAlertState, saveAlertState,
   pruneAlertState, recordAlertClaim, setAlertStatus, removeAlertClaim, alertsToday,
 } from "./alerts.mjs";
 import { buildArticleFacts, buildArticlePrompt, parseArticleOutput, validateArticle, wordCount } from "./article.mjs";
-import { gitAvailable, pullState, commitPush } from "./news-sync.mjs";
 
 // ---------------------------------------------------------------------------
 // Core watchlist — the 5 coins used by snapshot/mover/educational/weekly
@@ -465,6 +483,18 @@ async function getTrendingCoins() {
 
 // NEW (v2): Global market data from CoinGecko. Total market cap, 24h volume,
 // BTC/ETH dominance, and 24h market cap change.
+// v10.2 (restored v11.1): a real weekly draft once printed "24h volume:
+// $346169.28T". Daily volume can never exceed the whole market's cap, so an
+// impossible value is treated as unknown (null) instead of being published —
+// guarded HERE, at the source, so every consumer (daily templates, the AI
+// weekly article's facts, the research desk) is covered at once.
+function sanePositiveBelow(v, cap) {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  if (Number.isFinite(Number(cap)) && Number(cap) > 0 && n > Number(cap)) return null;
+  return n;
+}
+
 async function getGlobalMarket() {
   const res = await fetch(COINGECKO_GLOBAL_URL, {
     headers: coingeckoHeaders(),
@@ -474,11 +504,12 @@ async function getGlobalMarket() {
   const data = await res.json();
   return {
     totalMcap: data.data.total_market_cap.usd,
-    totalVolume: data.data.total_volume.usd,
+    totalVolume: sanePositiveBelow(data.data.total_volume.usd, data.data.total_market_cap.usd),
     btcDominance: data.data.market_cap_percentage.btc,
     ethDominance: data.data.market_cap_percentage.eth,
-    // v10.2 FIX: CoinGecko's field is market_cap_change_percentage_24h_usd; the old
-    // name never existed, so this was always undefined ("n/a" in posts/articles).
+    // v10.2 FIX (restored v11.1): CoinGecko's field is
+    // market_cap_change_percentage_24h_usd; the old name never existed, so
+    // this was always undefined ("n/a" in posts and articles).
     mcapChange24h: data.data.market_cap_change_percentage_24h_usd ?? data.data.market_cap_change_percentage_usd,
   };
 }
@@ -581,7 +612,8 @@ function fmtPrice(n) {
   } else {
     maxDecimals = 2;
   }
-  // v10.2: pinned to en-US so a PC with another regional format can't print "$82 950,00".
+  // v10.2 (restored v11.1): pinned to en-US so a PC with another regional
+  // format can't print "$82 950,00".
   return `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: maxDecimals })}`;
 }
 
@@ -710,7 +742,7 @@ function buildMacroOverviewPost(data, dayIndex, globalMarket, fng) {
   return [
     "\uD83C\uDF10 Macro Market Overview",
     `Total cap: ${fmtMcap(globalMarket.totalMcap)} (${fmtPct(globalMarket.mcapChange24h)} 24h).`,
-    `BTC dominance: ${globalMarket.btcDominance.toFixed(1)}%. 24h volume: ${fmtMcap(globalMarket.totalVolume)}.`,
+    `BTC dominance: ${globalMarket.btcDominance.toFixed(1)}%.${globalMarket.totalVolume ? ` 24h volume: ${fmtMcap(globalMarket.totalVolume)}.` : ""}`,
     sentimentLine,
     "",
     "Featured:",
@@ -1213,7 +1245,8 @@ async function callGemini(prompt, key, model, opts = {}) {
   const isThinkingModel = model.includes("2.5");
   // v10.2: Gemini 3.x and later also think by default. Rather than guess a
   // thinking-control field that differs between model generations, give them
-  // enough room for thinking plus the (short) post.
+  // enough room for thinking plus the (short) post. v11.1 restored opts.long
+  // (the stale v11 tree dropped it): the weekly article writes 450-650 words.
   const isNewGen = /gemini-([3-9]|\d{2,})/.test(model);
   const generationConfig = {
     maxOutputTokens: isNewGen ? (opts.long ? 8192 : 4096) : (opts.long ? 3000 : 800),
@@ -1544,7 +1577,10 @@ async function buildAiPost(data, dayIndex, style, ctx = {}) {
     const top3 = trending.slice(0, MAX_CASHTAGS_PER_POST);
     for (const t of top3) {
       allowedSymbols.push(t.symbol);
-      dataLines.push(`${t.symbol} (${t.name}), market cap rank #${t.rank}`);
+      // v10.2 (restored v11.1): plain "rank 5" — a "#" made GitHub render
+      // "rank #90" as a link to issue #90 in draft issues, and it reads no
+      // better in a post.
+      dataLines.push(`${t.symbol} (${t.name}), market cap rank ${t.rank}`);
     }
   } else if (style === "macro" && globalMarket) {
     const featured = rotateSubset(data, 2, dayIndex);
@@ -1554,7 +1590,7 @@ async function buildAiPost(data, dayIndex, style, ctx = {}) {
     }
     dataLines.push(`Total crypto market cap: ${fmtMcap(globalMarket.totalMcap)} (${fmtPct(globalMarket.mcapChange24h)} 24h)`);
     dataLines.push(`BTC dominance: ${globalMarket.btcDominance.toFixed(1)}%`);
-    dataLines.push(`24h volume: ${fmtMcap(globalMarket.totalVolume)}`);
+    if (globalMarket.totalVolume) dataLines.push(`24h volume: ${fmtMcap(globalMarket.totalVolume)}`);
     if (fng) dataLines.push(`Fear & Greed Index: ${fng.value}/100 (${fng.classification})`);
   } else if (style === "sentiment" && fng) {
     const featured = rotateSubset(data, 2, dayIndex);
@@ -1797,6 +1833,8 @@ async function squareApi(endpoint, apiKey, body, baseUrl = SQUARE_BASE_V2) {
     throw new Error(`Square API returned non-JSON response: ${res.status}`);
   }
   if (json.code !== "000000") {
+    // v10.2 (restored v11.1): the two limit errors get a plain-language hint
+    // so a log line is enough to know what happened and when it resets.
     const hint = { "220009": " (daily post limit for the OpenAPI is used up; Binance allows 100 posts/day, resets at 00:00 UTC)", "220014": " (daily image-upload limit used up; Binance allows 400/day)" }[json.code] || "";
     throw new Error(`Square API error [${json.code}]: ${json.message}${hint}`);
   }
@@ -2119,7 +2157,12 @@ function buildWeeklyArticle(data, dayIndex, ctx = {}) {
   if (globalMarket) {
     sections.push(`## Market Overview`);
     sections.push(`Total crypto market cap: **${fmtMcap(globalMarket.totalMcap)}** (${fmtPct(globalMarket.mcapChange24h)} in the last 24h).`);
-    sections.push(`BTC dominance: **${globalMarket.btcDominance.toFixed(1)}%**. 24h volume: ${fmtMcap(globalMarket.totalVolume)}.`);
+    // v11: sanity guard. A past draft showed "$346169.28T" of daily volume —
+    // daily volume can never exceed total market cap, so any such number is a
+    // data glitch, and printing it is worse than omitting it. When the pair
+    // is impossible, the volume stat is dropped, not "fixed".
+    const volumeSane = Number.isFinite(globalMarket.totalVolume) && Number.isFinite(globalMarket.totalMcap) && globalMarket.totalVolume > 0 && globalMarket.totalVolume <= globalMarket.totalMcap;
+    sections.push(`BTC dominance: **${globalMarket.btcDominance.toFixed(1)}%**.${volumeSane ? ` 24h volume: ${fmtMcap(globalMarket.totalVolume)}.` : ""}`);
     if (fng) {
       sections.push(`Fear & Greed Index: **${fng.value}/100** (${fng.classification}).`);
     }
@@ -2147,8 +2190,9 @@ function buildWeeklyArticle(data, dayIndex, ctx = {}) {
   if (trending && trending.length > 0) {
     sections.push(`## Trending Searches`);
     sections.push(`Most-searched coins on CoinGecko this week:`);
+    // v11: plain "rank 90" — the old "rank #90" made GitHub auto-link issue #90.
     for (const t of trending.slice(0, 3)) {
-      sections.push(`- **$${t.symbol}** (${t.name}) — market cap rank #${t.rank}`);
+      sections.push(`- **$${t.symbol}** (${t.name}) — rank ${t.rank} by market cap`);
     }
     sections.push("");
   }
@@ -2677,6 +2721,149 @@ function writeNewsSummary({ outcome, story, score, reasons, provider, text, id, 
   }
 }
 
+// ===========================================================================
+// v11 NEW: THE CARD PIPELINE — an image on every news post.
+// ---------------------------------------------------------------------------
+// Every news post gets a branded card: the headline, the coin chips, the
+// source and the disclaimer, in one consistent look. A sharp single-coin
+// move becomes an ALERT card (24h range bar); everything else is a NEWS
+// card, optionally with a 7-day price line when history is available.
+//
+// Graceful by construction: any failure anywhere in this pipeline (snapshot
+// fetch, history fetch, render, upload) logs one line and the post goes out
+// text-only. The card is an enhancement, never a dependency.
+//
+// The PNG step uses @resvg/resvg-js when it is installed (one-time:
+// `npm install --no-save @resvg/resvg-js` — the research-post and news-post
+// workflows do it automatically). Without it, cards are skipped cleanly.
+// ===========================================================================
+const NEWS_CARDS_ENABLED = () => String(process.env.NEWS_CARDS ?? "true").toLowerCase() !== "false";
+// Chart windows: alerts show the day's range by default (ALERT_CHART_HOURS=24);
+// news cards show the week behind the story (NEWS_CHART_HOURS=168). Both were
+// picked deliberately — 24h answers "how did today trade", 7d answers "what's
+// the trend behind this story" — and both are configurable.
+const ALERT_CHART_HOURS = () => Math.max(2, Math.min(24 * 30, Number(process.env.ALERT_CHART_HOURS) || 24));
+const CARD_SCALE = () => Math.max(1, Math.min(4, Number(process.env.CARD_SCALE) || 2));
+
+// Symbol → CoinGecko id, for the card data fetches. Built from the core
+// watchlist plus a few names that show up in headlines often.
+const CARD_COIN_IDS = {
+  ...Object.fromEntries(COINS.map((c) => [c.symbol, c.id])),
+  TRX: "tron", AVAX: "avalanche-2", DOT: "polkadot", LTC: "litecoin",
+  SHIB: "shiba-inu", TON: "the-open-network", BCH: "bitcoin-cash", SUI: "sui",
+  NEAR: "near", APT: "aptos", ARB: "arbitrum", OP: "optimism", PEPE: "pepe",
+};
+
+// 24h price + change for the chips. One call for all detected coins; fails
+// soft (returns []) so a card without data still renders.
+async function getCardCoinSnapshot(symbols) {
+  const ids = symbols.map((s) => CARD_COIN_IDS[s]).filter(Boolean);
+  if (!ids.length) return [];
+  const url = `https://api.coingecko.com/api/v3/simple/price?ids=${ids.join(",")}&vs_currencies=usd&include_24hr_change=true`;
+  const res = await fetch(url, { headers: coingeckoHeaders(), signal: AbortSignal.timeout(10_000) });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const json = await res.json();
+  return symbols
+    .map((s) => {
+      const id = CARD_COIN_IDS[s];
+      const row = id ? json[id] : null;
+      return row ? { symbol: s, price: row.usd ?? null, change24h: row.usd_24h_change ?? null } : { symbol: s, price: null, change24h: null };
+    })
+    .filter((c) => c.price != null || c.change24h != null);
+}
+
+// Price history for the card's mini chart. Returns [{p}] (ascending) or null.
+// CoinGecko scopes by days (1 or N); we then downsample to a sane point count
+// so the polyline stays light at any window size.
+async function getCoinPriceHistory(symbol, hours) {
+  const id = CARD_COIN_IDS[symbol];
+  if (!id) return null;
+  const days = hours <= 26 ? 1 : Math.min(90, Math.ceil(hours / 24));
+  const url = `https://api.coingecko.com/api/v3/coins/${id}/market_chart?vs_currency=usd&days=${days}`;
+  const res = await fetch(url, { headers: coingeckoHeaders(), signal: AbortSignal.timeout(10_000) });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const json = await res.json();
+  const points = (Array.isArray(json?.prices) ? json.prices : [])
+    .map(([ts, p]) => ({ ts, p }))
+    .filter((pt) => Number.isFinite(pt.p) && pt.ts >= Date.now() - hours * 3600 * 1000);
+  if (points.length < 8) return null;
+  // Downsample to at most ~48 points, always keeping the newest.
+  const max = 48;
+  if (points.length <= max) return points;
+  const step = (points.length - 1) / (max - 1);
+  const out = [];
+  for (let i = 0; i < max; i++) out.push(points[Math.round(i * step)]);
+  return out;
+}
+
+// Decides card type for a story. Sharp single-coin moves get the ALERT card.
+function isSharpMoveStory(cluster) {
+  const title = cluster.primary.title;
+  const coins = detectCoins(title);
+  return coins.length === 1 && /\b(plunge[sd]?|plummet[sd]?|crash(es|ed)?|sink[sd]?|surge[sd]?|soar[sd]?|spike[sd]?|jumps?|tumbles?|slides?|dumps?|pumps?)\b/i.test(title);
+}
+
+// Builds the card SVG for the chosen story (news or alert), or null.
+function buildCardForStory({ cluster, coins, disclaimer }) {
+  const title = cluster.primary.title;
+  const source = cluster.sources.slice(0, 2).join(", ");
+  if (isSharpMoveStory(cluster)) {
+    const sym = detectCoins(title)[0];
+    const snap = coins.find((c) => c.symbol === sym) || null;
+    return {
+      kind: "alert",
+      svg: buildAlertCardSvg({
+        symbol: `$${sym}`,
+        price: snap?.price ?? null,
+        change24h: snap?.change24h ?? null,
+        headline: title,
+        source,
+        disclaimer,
+      }),
+    };
+  }
+  return {
+    kind: "news",
+    svg: buildNewsCardSvg({
+      headline: title,
+      context: null,
+      source,
+      coins: coins.map((c) => ({ symbol: `$${c.symbol}`, change24h: c.change24h })),
+      disclaimer,
+    }),
+  };
+}
+
+// Dry runs write the card to logs/ (SVG always, PNG when the renderer is
+// installed) so you can open exactly what would have been posted. Returns a
+// one-line description for the log.
+async function writeCardPreview(svg, kind) {
+  const base = path.join("logs", `card-preview-${kind}-${Date.now()}`);
+  try {
+    fs.mkdirSync("logs", { recursive: true });
+    fs.writeFileSync(`${base}.svg`, svg);
+  } catch { return "preview could not be written"; }
+  try {
+    const png = await renderSvgToPng(svg, { scale: CARD_SCALE() });
+    if (png) { fs.writeFileSync(`${base}.png`, png); return `preview written to ${base}.png`; }
+  } catch { /* fall through to the SVG-only message */ }
+  return `preview written to ${base}.svg (PNG renderer not installed: npm install --no-save @resvg/resvg-js)`;
+}
+
+// Renders + uploads a card. Returns the uploaded image URL, or null (with a
+// logged reason) for ANY failure. Dry runs skip upload and return a marker.
+async function cardToSquareImage(svg, apiKey) {
+  const png = await renderSvgToPng(svg, { scale: CARD_SCALE() });
+  if (!png) throw new Error("PNG renderer unavailable (npm install --no-save @resvg/resvg-js)");
+  const tmpFile = path.join(os.tmpdir(), `news-card-${Date.now()}.png`);
+  fs.writeFileSync(tmpFile, png);
+  try {
+    return await uploadImageToSquare(apiKey, tmpFile);
+  } finally {
+    try { fs.unlinkSync(tmpFile); } catch { /* temp file cleanup is best-effort */ }
+  }
+}
+
 async function runNewsMode() {
   const dry = isDryRun();
   const envNum = (name, dflt) => (process.env[name] !== undefined && process.env[name] !== "" && Number.isFinite(Number(process.env[name])) ? Number(process.env[name]) : dflt);
@@ -2783,8 +2970,11 @@ async function runNewsMode() {
     console.log(`  Chosen (${choice.score}, ${choice.decision.action}): ${story.primary.title}`);
 
     if (dry) break;
-    saveNewsStateFile(cfg.stateFile, recordClaim(state, story, nowMs, claimStatus));
-    const r = push(`news: claim "${story.primary.title.slice(0, 60)}"`);
+    // v11: tag the claim with its ETF-flow coin (if any) so the 10-hour
+    // pacing rule can see it across machines and restarts.
+    const etfCoin = classifyEtfFlow(story.primary.title);
+    saveNewsStateFile(cfg.stateFile, recordClaim(state, story, nowMs, claimStatus, etfCoin ? { etfFlow: etfCoin } : null));
+    const r = push(`news: claim "${story.primary.title.slice(0, 60)}"${etfCoin ? ` [etf:${etfCoin}]` : ""}`);
     if (r === "pushed") break;
     if (r === "conflict" && attempt < 3) {
       console.log(`  Another runner pushed first (attempt ${attempt}); re-reading shared state and re-deciding...`);
@@ -2825,9 +3015,17 @@ async function runNewsMode() {
     const titleCoins = detectCoins(story.items.map((i) => i.title).join(" "));
     const cashtags = titleCoins.slice(0, MAX_CASHTAGS_PER_POST).map((s) => `$${s}`);
     const hashtags = pickHashtags(cashtags.join(" "));
+    // v11: disclaimers rotate like the daily posts' closing line (the run
+    // hour is the seed, so they cycle within a day). A custom NEWS_DISCLAIMER
+    // stays fixed.
+    const customDisclaimer = resolveNewsDisclaimer(process.env.NEWS_DISCLAIMER);
+    const wasCustom = String(process.env.NEWS_DISCLAIMER ?? "").trim() !== "" && customDisclaimer !== "";
+    const disclaimer = wasCustom ? customDisclaimer : pickNewsDisclaimer(Math.floor(nowMs / 3600000));
     const text = assembleNewsPost({
       headline: copy.headline,
       context: copy.context,
+      detail: copy.detail || null,
+      reaction: copy.reaction || null,
       sources: story.sources,
       score: choice.score,
       ageMinutes: Math.max(0, Math.round((nowMs - story.firstSeen) / 60000)),
@@ -2835,7 +3033,7 @@ async function runNewsMode() {
       hashtags,
       maxCashtags: MAX_CASHTAGS_PER_POST,
       maxHashtags: MAX_HASHTAGS_PER_POST,
-      disclaimer: resolveNewsDisclaimer(process.env.NEWS_DISCLAIMER, story.primary.title),
+      disclaimer,
     });
     console.log(`\n--- News post preview (${provider ? `ai: ${provider}` : "template"}) ---\n${text}\n--------------------`);
 
@@ -2865,19 +3063,27 @@ async function runNewsMode() {
     }
 
     // ---- publish ----
-    let id = null;
-    // v10.2: attach a 48h price chart (our own, from Binance candles) when the
-    // story's lead coin is one we track. NEWS_CHART=off disables. Any failure
-    // means text-only; publishers' own photos are deliberately NOT reused.
+    // v11: build the card FIRST (needs the exact final text story data), then
+    // publish text + image in one post. Any card failure → text-only post.
     let imageUrl = null;
-    const leadSymbol = (cashtags[0] || "").slice(1);
-    if (leadSymbol && DEFAULT_ALERT_COINS.includes(leadSymbol) && !envOff("NEWS_CHART")) {
-      if (dry) console.log(`  [DRY RUN] Would attach a 48h price chart for $${leadSymbol}.`);
-      else {
-        try { imageUrl = await buildPriceChartImage(leadSymbol, null); }
-        catch (err) { console.log(`  Chart skipped (${err.message}) — posting text-only.`); }
+    if (NEWS_CARDS_ENABLED()) {
+      try {
+        const coins = await getCardCoinSnapshot(titleCoins);
+        const card = buildCardForStory({ cluster: story, coins, disclaimer });
+        if (card) {
+          if (dry) {
+            console.log(`  Card: ${card.kind} — ${await writeCardPreview(card.svg, card.kind)}; upload skipped in dry run.`);
+          } else {
+            imageUrl = await cardToSquareImage(card.svg, process.env.BINANCE_SQUARE_OPENAPI_KEY);
+            console.log(`  Card: ${card.kind} rendered and uploaded: ${imageUrl ? "yes" : "no"}`);
+          }
+        }
+      } catch (cardErr) {
+        console.log(`  Card skipped (${cardErr.message}) — posting text-only.`);
+        imageUrl = null;
       }
     }
+    let id = null;
     if (!dry) {
       try {
         id = await postToSquareWithOptionalImage(text, imageUrl);
@@ -2909,51 +3115,284 @@ async function runNewsMode() {
   }
 }
 
-// v9.5 NEW: writes a compact markdown summary of what a run did to
-// $GITHUB_STEP_SUMMARY — the file GitHub Actions renders directly in a run's
-// "Summary" tab. No separate workflow step is needed: this runs as part of
-// the same "Post to Binance Square" step, since all the data it needs
-// (source, provider, cashtags, hashtags, post ID) only exists here. If the
-// env var isn't set (running locally, or under `node --test`), this is a
-// silent no-op — nothing to configure, nothing that can break outside Actions.
-function writeJobSummary({ style, source, aiProvider, text, imageUrl, id, dryRun }) {
-  const summaryFile = process.env.GITHUB_STEP_SUMMARY;
-  if (!summaryFile) return;
+// ===========================================================================
+// v11 NEW: THE EDUCATION & RESEARCH DESK (RUN_MODE=research)
+// ---------------------------------------------------------------------------
+// The vision: a small crypto media desk — news (above), and now the
+// education/research side. Every piece is grounded the same way the news
+// pipeline grounds its copy:
+//
+//   1. FACTS are fetched from free, key-less sources (DefiLlama, mempool.space,
+//      Wikipedia) — only what the chosen topic declares it needs.
+//   2. The AI writes four labelled lines FROM those facts, untrusted-data
+//      markers around them, same protocol as the news writer.
+//   3. validateResearchCopy() rejects any number or name not in the facts,
+//      any advice, prediction, link, cashtag or emoji; one corrective retry
+//      per provider, then the topic is skipped (a failed piece is never
+//      published ungrounded, and a skipped topic isn't offered again soon).
+//   4. Full text goes to Telegram for a one-tap approval before anything is
+//      published (RESEARCH_APPROVAL, default: on when Telegram is configured).
+//   5. Visuals: an explainer slide for short posts, an article cover for the
+//      monthly long-form. Slides are deliberately reserved for education and
+//      research — news posts get cards instead.
+//
+// Formats (the user asked: short posts or article form?):
+//   - short  — the default, 2-3x/week (research-post.yml Tue/Fri), ≤1500 chars,
+//              posted as text + explainer slide image.
+//   - article — once a month (first Saturday, chosen here because cron can't
+//              express "first Saturday"), contentType 2 long-form whose
+//              sections are assembled mechanically from the facts (numbers
+//              grounded by construction) with the validated copy as intro,
+//              plus an article cover image.
+//
+// State: research-state/published.json — { recent: [topicId,...] } keeps the
+// rotation from repeating within a full cycle, and doubles as the rerun
+// guard for the same day. Committed by the workflow like the news state.
+// ===========================================================================
+const RESEARCH_STATE_FILE_DEFAULT = "research-state/published.json";
+// How many recent topic ids to remember (one full rotation of each kind is 7-8).
+const RESEARCH_MEMORY = 10;
 
-  const cashtags = [...new Set(countCashtags(text))];
-  const hashtags = text.match(/#[A-Za-z]+/g) || [];
-  const postUrl = id && id !== "dry-run-id" ? `https://www.binance.com/square/post/${id}` : null;
-
-  const rows = [
-    ["Style", style],
-    ["Source", aiProvider ? `AI (${aiProvider})` : source],
-    ["Length", `${text.length} chars`],
-    ["Cashtags", cashtags.length ? cashtags.join(", ") : "none"],
-    ["Hashtags", hashtags.length ? hashtags.join(", ") : "none"],
-    ["Image attached", imageUrl ? "yes" : "no"],
-    ["Dry run", dryRun ? "yes" : "no"],
-    ["Post", postUrl ? `[View on Binance Square](${postUrl})` : dryRun ? "n/a (dry run)" : "no ID returned"],
-  ];
-
-  const md = [
-    `### Daily post summary`,
-    ``,
-    `| Field | Value |`,
-    `|---|---|`,
-    ...rows.map(([k, v]) => `| ${k} | ${v} |`),
-    ``,
-  ].join("\n");
-
+function loadResearchStateFile(file) {
   try {
-    fs.appendFileSync(summaryFile, md);
-  } catch (err) {
-    console.log(`  Could not write job summary (${err.message}) — non-fatal.`);
+    const raw = JSON.parse(fs.readFileSync(file, "utf8"));
+    return { recent: Array.isArray(raw?.recent) ? raw.recent.slice(-RESEARCH_MEMORY) : [], lastRunDay: typeof raw?.lastRunDay === "string" ? raw.lastRunDay : null };
+  } catch {
+    return { recent: [], lastRunDay: null };
   }
 }
 
+function saveResearchStateFile(file, state) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(state, null, 2) + "\n");
+}
+
+function writeResearchSummary({ outcome, topic, kind, provider, text, title, id, dryRun, factHealth }) {
+  const f = process.env.GITHUB_STEP_SUMMARY;
+  if (!f) return;
+  const lines = [`### Research run — ${outcome}`, ""];
+  if (topic) {
+    lines.push(
+      `**Topic:** ${topic.title} (${kind})`,
+      `**Written by:** ${provider ? `AI (${provider})` : "skipped"} · **Dry run:** ${dryRun ? "yes" : "no"}`,
+      factHealth ? `**Fact sources:** ${factHealth.join(", ")}` : "",
+      id && id !== "dry-run-id" ? `**Post:** [View](https://www.binance.com/square/post/${id})` : "",
+      "", title ? `**${title}**` : "", "```", text || "", "```", ""
+    );
+  }
+  try {
+    fs.appendFileSync(f, lines.filter((l) => l !== "").join("\n"));
+  } catch (err) {
+    console.log(`  Could not write research summary (${err.message}) — non-fatal.`);
+  }
+}
+
+// Same provider chain as the news writer, with the research validator.
+async function callAiForResearch(prompt, factsText) {
+  const banned = BANNED_PHRASES.map((p) => p.toLowerCase());
+  for (const provider of orderedProviders()) {
+    const key = process.env[provider.envKey];
+    if (!key) continue;
+    console.log(`  Trying ${provider.name} (${provider.model})...`);
+    let currentPrompt = prompt;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      let raw;
+      try {
+        raw = await provider.callFn(currentPrompt, key, provider.model);
+      } catch (err) {
+        console.log(`  ${provider.name}: ${err.message}`);
+        break;
+      }
+      const copy = parseResearchAiOutput(raw);
+      const verdict = copy
+        ? validateResearchCopy(copy, { factsText })
+        : { ok: false, reason: "output did not follow the HOOK/BODY/TAKEAWAY/QUESTION format" };
+      if (verdict.ok) {
+        console.log(`  ${provider.name}: SUCCESS${attempt ? " on retry" : ""} (validated).`);
+        return { copy, provider: provider.name };
+      }
+      console.log(`  ${provider.name}: rejected — ${verdict.reason}`);
+      currentPrompt = `${prompt}\n\nYour previous answer was rejected because: ${verdict.reason}.\nPrevious answer:\n${raw}\nWrite a corrected answer in the same four-line format.`;
+    }
+  }
+  return null;
+}
+
+async function runResearchMode() {
+  const dry = isDryRun();
+  const runMode = process.env.RESEARCH_MODE || "auto"; // auto | short | article
+  const stateFile = process.env.RESEARCH_STATE_FILE || RESEARCH_STATE_FILE_DEFAULT;
+  const approvalMode = String(process.env.RESEARCH_APPROVAL ?? "").toLowerCase();
+  const tgOn = telegramConfigured();
+  // Default (unset): ask whenever Telegram is configured. "off"/"none" never
+  // asks. Any other value ("on"/"all") also just means "ask when Telegram exists".
+  const needsApproval = approvalMode === "off" || approvalMode === "none" ? false : tgOn;
+  const now = new Date();
+  const nowMs = now.getTime();
+  const dayIndex = now.getDate();
+
+  console.log(`\n=== RESEARCH MODE (${runMode}${dry ? ", DRY RUN" : ""}, approval ${needsApproval ? "on" : "off"}) ===`);
+
+  // Which format? auto → article on the first Saturday, short otherwise.
+  // Other Saturdays are reserved: they neither post a short nor an article.
+  const kind = runMode === "article" || (runMode === "auto" && isFirstSaturday(nowMs)) ? "research-article" : "education";
+  const topicKind = kind === "research-article" ? "research" : kind;
+  if (runMode === "auto" && now.getUTCDay() === 6 && !isFirstSaturday(nowMs)) {
+    console.log(`  Saturday is reserved for the monthly article, and this isn't the first Saturday. Nothing to do.`);
+    writeResearchSummary({ outcome: "not the first Saturday", dryRun: dry });
+    return;
+  }
+
+  const state = loadResearchStateFile(stateFile);
+  const today = now.toISOString().slice(0, 10);
+  // Rerun guard: the same scheduled day never publishes twice. Manual reruns
+  // after an edit can set RESEARCH_FORCE=true to bypass it.
+  if (state.lastRunDay === today && String(process.env.RESEARCH_FORCE).toLowerCase() !== "true") {
+    console.log(`  Already ran today (${today}); nothing to do. Set RESEARCH_FORCE=true to override.`);
+    writeResearchSummary({ outcome: "already ran today", dryRun: dry });
+    return;
+  }
+
+  // ---- 1. pick a topic from what hasn't been used recently ----
+  const topic = pickResearchTopic({ kind: topicKind, recentIds: state.recent, dayIndex });
+  if (!topic) {
+    console.log(`  No ${topicKind} topic available — every topic in the rotation was used recently.`);
+    writeResearchSummary({ outcome: "no topic available", dryRun: dry });
+    return;
+  }
+  console.log(`  Topic: "${topic.title}" (${topicKind}, needs: ${(topic.needs || []).join(", ")})`);
+
+  // ---- 2. gather the facts (a missing source just thins the block) ----
+  console.log(`  Fetching facts...`);
+  const facts = await gatherFacts(topic);
+  if (!facts) {
+    console.log(`  Every fact source failed or returned nothing — not posting an ungrounded piece.`);
+    writeResearchSummary({ outcome: "no facts available", topic, kind, dryRun: dry });
+    return;
+  }
+  const factHealth = facts.blocks.filter((b) => b.text).map((b) => b.source);
+  for (const b of facts.blocks) {
+    console.log(`    ${b.text ? "ok" : "FAILED"}: ${b.source}${b.error ? ` (${b.error})` : ` — ${b.text.length} chars`}`);
+  }
+  topic.sources = factHealth;
+
+  // ---- 3. write (AI from facts only, validated) ----
+  let copy = null;
+  let provider = null;
+  if (hasAnyAiProvider()) {
+    const ai = await callAiForResearch(buildResearchPrompt(topic, facts.factsText), facts.factsText);
+    if (ai) { copy = ai.copy; provider = ai.provider; }
+  }
+  if (!copy) {
+    console.log(`  No validated AI copy — skipping this topic rather than posting an ungrounded or unwritten piece.`);
+    if (!dry) {
+      const s2 = loadResearchStateFile(stateFile);
+      saveResearchStateFile(stateFile, { ...s2, recent: [...s2.recent.filter((id) => id !== topic.id), topic.id].slice(-RESEARCH_MEMORY) });
+    }
+    writeResearchSummary({ outcome: "skipped (no validated copy)", topic, kind, dryRun: dry, factHealth });
+    return;
+  }
+
+  // ---- 4. build the pieces (short post or monthly article) ----
+  const postText = assembleResearchPost({ copy, topic });
+  const dexShares = topic.needs?.includes("defillama-dexs") ? computeDexShares(dexOverviewFromFacts(facts)) : [];
+  const articleBody = kind === "research-article"
+    ? buildResearchArticleMarkdown({ topic, facts, copy, shares: dexShares })
+    : null;
+  const articleTitle = kind === "research-article" ? `${topic.title} — ${now.toISOString().slice(0, 10)}` : null;
+
+  // Visuals: explainer slide for short posts, cover for articles.
+  let imageUrl = null;
+  try {
+    const svg = kind === "research-article"
+      ? buildArticleCoverSvg({ kicker: topic.kicker, title: topic.title, footer: `The Tape · ${factHealth.join(", ")}` })
+      : buildExplainerSlideSvg({
+          kicker: topic.kicker,
+          title: topic.title,
+          bullets: [copy.body, copy.takeaway],
+          footer: `The Tape · ${factHealth.join(", ")}`,
+        });
+    if (dry) {
+      const preview = path.join("logs", `research-preview-${Date.now()}.svg`);
+      try { fs.mkdirSync(path.dirname(preview), { recursive: true }); fs.writeFileSync(preview, svg); } catch { /* best effort */ }
+      console.log(`  Visual: ${kind === "research-article" ? "article cover" : "explainer slide"} (SVG ${svg.length} chars) — preview written to ${preview}.`);
+    } else {
+      imageUrl = await cardToSquareImage(svg, process.env.BINANCE_SQUARE_OPENAPI_KEY);
+      console.log(`  Visual rendered and uploaded: ${imageUrl ? "yes" : "no"}`);
+    }
+  } catch (err) {
+    console.log(`  Visual skipped (${err.message}) — posting text-only.`);
+  }
+
+  console.log(`\n--- Research ${kind} preview (${provider ? `ai: ${provider}` : "n/a"}) ---\n${articleBody || postText}\n--------------------`);
+
+  // ---- 5. full text to Telegram for a tap before anything publishes ----
+  if (needsApproval) {
+    if (dry) {
+      console.log(`  [DRY RUN] Would send this to Telegram and wait for a tap.`);
+    } else {
+      const key = process.env.BINANCE_SQUARE_OPENAPI_KEY;
+      if (!key) throw new Error("Missing BINANCE_SQUARE_OPENAPI_KEY environment variable.");
+      const waitMin = Math.max(1, Number(process.env.RESEARCH_APPROVAL_WAIT_MIN) || 120);
+      console.log(`  Sent to Telegram for approval; waiting up to ${waitMin} min...`);
+      const verdict = await requestApproval({
+        token: process.env.TELEGRAM_BOT_TOKEN,
+        chatId: process.env.TELEGRAM_CHAT_ID,
+        message: buildApprovalMessage({
+          text: (articleTitle ? `${articleTitle}\n\n${articleBody}` : postText).slice(0, 3500),
+          story: { items: [{ source: `topic: ${topic.id}`, link: "" }] },
+          score: "—",
+          reasons: [`grounded on ${factHealth.join(", ")}`],
+          provider,
+          decisionReason: kind === "research-article" ? "monthly research article" : `${topicKind} post`,
+        }),
+        id: `res-${crypto.createHash("sha1").update(`${topic.id}|${today}`).digest("hex").slice(0, 10)}`,
+        waitMs: waitMin * 60_000,
+        log: (m) => console.log(`  ${m}`),
+      });
+      console.log(`  Approval result: ${verdict}.`);
+      if (verdict !== "approved") {
+        writeResearchSummary({ outcome: `not posted (${verdict})`, topic, kind, provider, text: articleBody || postText, title: articleTitle, dryRun: dry, factHealth });
+        return;
+      }
+    }
+  }
+
+  // ---- 6. publish + record ----
+  let id = null;
+  if (!dry) {
+    const key = process.env.BINANCE_SQUARE_OPENAPI_KEY;
+    if (!key) throw new Error("Missing BINANCE_SQUARE_OPENAPI_KEY environment variable.");
+    if (kind === "research-article") {
+      id = await postArticleToSquare(articleTitle, articleBody, imageUrl);
+    } else {
+      id = await postToSquareWithOptionalImage(postText, imageUrl);
+    }
+  }
+  if (!dry) {
+    const s2 = loadResearchStateFile(stateFile);
+    saveResearchStateFile(stateFile, {
+      recent: [...s2.recent.filter((x) => x !== topic.id), topic.id].slice(-RESEARCH_MEMORY),
+      lastRunDay: today,
+    });
+    console.log(id && id !== "dry-run-id" ? `  SUCCESS — https://www.binance.com/square/post/${id}` : `  Post likely succeeded (no ID returned).`);
+  } else {
+    console.log(`  [DRY RUN] Nothing published, research state not updated.`);
+  }
+  writeResearchSummary({ outcome: dry ? "dry run" : "posted", topic, kind, provider, text: articleBody || postText, title: articleTitle, id, dryRun: dry, factHealth });
+}
+
+// Recover the parsed DEX overview from the facts blocks (gatherFacts stores
+// the parsed shape on the block as .data — no second network call needed).
+function dexOverviewFromFacts(facts) {
+  const block = facts.blocks.find((b) => b.data && b.data.total24h != null);
+  return block ? block.data : { total24h: null, top: [] };
+}
+
 // ===========================================================================
-// v10.2 NEW: PRICE ALERTS (RUN_MODE=alerts) — "Bitcoin falls below $83,000"
-// ===========================================================================
+// v10.2 NEW (restored & upgraded in v11.1): PRICE ALERTS (RUN_MODE=alerts)
+// — "Bitcoin falls below $83,000"
+// ---------------------------------------------------------------------------
 // Data-driven, LLM-written short posts. Binance's public market-data API gives
 // the live price, the 24h stats and recent candles; alerts.mjs decides WHAT
 // happened (a round level crossed, or a big 24h move); the AI only phrases it
@@ -2961,10 +3400,18 @@ function writeJobSummary({ style, source, aiProvider, text, imageUrl, id, dryRun
 // State (what already fired) is shared through git exactly like news, so the
 // PC and GitHub can both run this without double-posting.
 //
+// v11.1 upgrade: the alert now carries the branded ALERT CARD (big price,
+// 24h range bar, price line over ALERT_CHART_HOURS with the crossed level
+// drawn dashed). If the PNG renderer isn't installed the old QuickChart price
+// line is the fallback, then text-only — an alert never fails because its
+// image pipeline did.
+//
 // Env: ALERT_COINS (BTC,ETH,BNB,SOL,XRP,ADA,DOGE,LINK), ALERT_MOVE_PCT (5),
 //   ALERT_LEVEL_PCT (1.25), ALERT_LOOKBACK_MIN (30), ALERT_COIN_COOLDOWN_MIN
-//   (45), ALERT_MAX_PER_DAY (20), ALERT_APPROVAL (all|off; default: all when Telegram is set up, else off), ALERT_CHART
-//   (default on; "off" disables), ALERT_DISCLAIMER (see NEWS_DISCLAIMER).
+//   (45), ALERT_MAX_PER_DAY (20), ALERT_APPROVAL (all|off; default: all when
+//   Telegram is set up, else off), ALERT_CHART (default on; "off" disables),
+//   ALERT_CHART_HOURS (24 — the day's range puts a level cross in context),
+//   ALERT_DISCLAIMER (see NEWS_DISCLAIMER).
 // ===========================================================================
 const BINANCE_API_BASE = "https://data-api.binance.vision/api/v3";
 
@@ -3021,14 +3468,6 @@ async function renderAndUploadChart(chartConfig) {
   }
 }
 
-// 48h hourly price line (+ the crossed level). Returns an uploaded image URL
-// or null; callers treat any failure as "post text-only".
-async function buildPriceChartImage(symbol, level = null) {
-  const k = await fetchBinanceKlines(`${symbol}USDT`, "1h", 48);
-  const cfg = buildPriceChartConfig({ symbol, closes: k.map((c) => c.close), level, hours: 48 });
-  return cfg ? renderAndUploadChart(cfg) : null;
-}
-
 function parseAlertCoins(v) {
   const list = String(v || "").split(",").map((x) => x.trim().toUpperCase()).filter((x) => /^[A-Z0-9]{2,10}$/.test(x));
   return list.length ? [...new Set(list)] : DEFAULT_ALERT_COINS;
@@ -3081,7 +3520,7 @@ function writeAlertSummary({ outcome, alert, text, provider, imageUrl, id, dryRu
   const rows = [["Outcome", outcome]];
   if (note) rows.push(["Note", note]);
   if (alert) rows.push(["Alert", `${alert.name} — ${alert.kind === "level" ? `${alert.dir === "down" ? "below" : "above"} ${fmtLevel(alert.level)}` : `${alert.dir} ${Math.abs(alert.change24h).toFixed(1)}% in 24h`} (score ${alert.score})`]);
-  if (text) rows.push(["Written by", provider ? `AI (${provider})` : "data template"], ["Length", `${text.length} chars`], ["Chart attached", imageUrl ? "yes" : "no"]);
+  if (text) rows.push(["Written by", provider ? `AI (${provider})` : "data template"], ["Length", `${text.length} chars`], ["Image attached", imageUrl ? "yes" : "no"]);
   rows.push(["Dry run", dryRun ? "yes" : "no"]);
   if (id && id !== "dry-run-id") rows.push(["Post", `[View on Binance Square](https://www.binance.com/square/post/${id})`]);
   try {
@@ -3103,8 +3542,9 @@ async function runAlertsMode() {
   };
   const gitSync = String(process.env.NEWS_GIT_SYNC).toLowerCase() === "true";
   const tgOn = telegramConfigured();
-  // Default: ask on Telegram when it is set up (a new feature should not post
-  // unasked); ALERT_APPROVAL=off posts automatically, =all insists on approval.
+  // Default: ask on Telegram when it is set up (a sharp move is exactly the
+  // post a human should glance at first); ALERT_APPROVAL=off posts
+  // automatically, =all insists on approval.
   const approvalSetting = String(process.env.ALERT_APPROVAL ?? "").trim().toLowerCase();
   const wantApproval = approvalSetting === "all" || (approvalSetting === "" && tgOn);
   console.log(`\n=== PRICE ALERTS (${cfg.coins.length} coins, level ~${cfg.levelPct}%, move ≥${cfg.movePct}%, cap ${cfg.maxPerDay}/day, cooldown ${cfg.coinCooldownMin}min, approval ${wantApproval ? "all" : "off"}${gitSync ? ", git-sync" : ""}${dry ? ", DRY RUN" : ""}) ===`);
@@ -3177,7 +3617,11 @@ async function runAlertsMode() {
       console.log("  Using the data template (no validated AI copy).");
       copy = buildAlertTemplate(alert);
     }
-    const disclaimer = resolveNewsDisclaimer(process.env.ALERT_DISCLAIMER ?? process.env.NEWS_DISCLAIMER, alert.id);
+    // v11.1: disclaimers rotate like the news posts' (the run hour is the
+    // seed). A custom ALERT_DISCLAIMER / NEWS_DISCLAIMER stays fixed.
+    const customDisclaimer = resolveNewsDisclaimer(process.env.ALERT_DISCLAIMER ?? process.env.NEWS_DISCLAIMER);
+    const wasCustom = String(process.env.ALERT_DISCLAIMER ?? process.env.NEWS_DISCLAIMER ?? "").trim() !== "" && customDisclaimer !== "";
+    const disclaimer = wasCustom ? customDisclaimer : pickNewsDisclaimer(Math.floor(nowMs / 3600000));
     const text = assembleAlertPost({ alert, headline: copy.headline, context: copy.context, disclaimer, hashtags: pickHashtags(`$${alert.symbol}`) });
     console.log(`\n--- Alert preview (${provider ? `ai: ${provider}` : "template"}) ---\n${text}\n--------------------`);
 
@@ -3201,13 +3645,60 @@ async function runAlertsMode() {
       }
     }
 
-    // ---- chart (48h price line + the crossed level) ----
+    // ---- image: v11.2 — most alerts are TEXT ONLY. A picture is for violent
+    // moves (see extremeMove in alerts.mjs). ALERT_CHART=extreme (default) |
+    // all | off. Extreme moves get the loud glowing card; "all" gives every
+    // alert the standard card. A card failure never blocks the post. ----
     let imageUrl = null;
-    if (!envOff("ALERT_CHART")) {
-      if (dry) console.log(`  [DRY RUN] Would attach a 48h price chart for $${alert.symbol}.`);
-      else {
-        try { imageUrl = await buildPriceChartImage(alert.symbol, alert.kind === "level" ? alert.level : null); }
-        catch (err) { console.log(`  Chart skipped (${err.message}) — posting text-only.`); }
+    const imageMode = envOff("ALERT_CHART") ? "off" : /^all$/i.test(String(process.env.ALERT_CHART ?? "").trim()) ? "all" : "extreme";
+    const ext = extremeMove(alert, { movePct: envNumber("ALERT_CARD_MOVE_PCT", 8), flashPct: envNumber("ALERT_CARD_FLASH_PCT", 3) });
+    const wantImage = imageMode === "all" || (imageMode === "extreme" && ext.extreme);
+    if (!wantImage) {
+      console.log(`  Image: none (${imageMode === "off" ? "ALERT_CHART=off" : "not an extreme move"}) — posting text-only.`);
+    } else {
+      const alertHours = envNumber("ALERT_CHART_HOURS", 24);
+      const win = chartWindow(alertHours);
+      let closes = null;
+      try {
+        const k = await fetchBinanceKlines(`${alert.symbol}USDT`, win.interval, win.limit);
+        closes = k.map((c) => c.close);
+      } catch (err) {
+        console.log(`  Price history unavailable (${err.message}) — the card will render without the price line.`);
+      }
+      try {
+        const sparkline = closes && closes.length >= 8 ? closes.map((p) => ({ p })) : null;
+        const level = alert.kind === "level" ? alert.level : null;
+        const svg = ext.extreme
+          ? buildExtremeAlertCardSvg({
+              symbol: `$${alert.symbol}`, price: alert.price, heroPct: ext.pct, heroLabel: ext.label,
+              change24h: Number.isFinite(alert.change24h) ? alert.change24h : null,
+              headline: copy.headline, source: "Binance", sparkline, level,
+            })
+          : buildAlertCardSvg({
+              symbol: `$${alert.symbol}`, price: alert.price,
+              change24h: Number.isFinite(alert.change24h) ? alert.change24h : null,
+              low: Number.isFinite(alert.low24h) ? alert.low24h : null,
+              high: Number.isFinite(alert.high24h) ? alert.high24h : null,
+              windowLabel: `${win.hours}h range`, headline: copy.headline, source: "Binance",
+              sparkline, sparklineLabel: `${win.hours}h`, level,
+            });
+        if (dry) {
+          console.log(`  Image: ${ext.extreme ? "EXTREME" : "standard"} alert card — ${await writeCardPreview(svg, "alert")}; upload skipped in dry run.`);
+        } else {
+          imageUrl = await cardToSquareImage(svg, process.env.BINANCE_SQUARE_OPENAPI_KEY);
+          if (imageUrl) console.log(`  Alert card rendered and uploaded (${ext.extreme ? "extreme" : "standard"}).`);
+        }
+      } catch (cardErr) {
+        console.log(`  Alert card skipped (${cardErr.message}) — trying the plain price chart.`);
+        try {
+          if (!dry && closes && closes.length >= 2) {
+            const chartConfig = buildPriceChartConfig({ symbol: alert.symbol, closes, level: alert.kind === "level" ? alert.level : null, hours: win.hours });
+            imageUrl = chartConfig ? await renderAndUploadChart(chartConfig) : null;
+          }
+        } catch (chartErr) {
+          console.log(`  Chart skipped too (${chartErr.message}) — posting text-only.`);
+          imageUrl = null;
+        }
       }
     }
 
@@ -3226,9 +3717,9 @@ async function runAlertsMode() {
         throw err;
       }
       if (claimStatus === "pending") sync.update((s) => setAlertStatus(s, alert, "posted"), "alerts: posted");
-      console.log(id ? `  SUCCESS — https://www.binance.com/square/post/${id}` : "  Post likely succeeded (no ID returned).");
+      console.log(id ? `  SUCCESS — https://www.binance.com/square/post/${id}` : `  Post likely succeeded (no ID returned).`);
     } else {
-      console.log(`  [DRY RUN] Would publish ${text.length} chars${imageUrl ? " + chart" : ""}. Nothing published, state not updated.`);
+      console.log(`  [DRY RUN] Would publish ${text.length} chars${imageUrl ? " + card/chart" : ""}. Nothing published, state not updated.`);
     }
     writeAlertSummary({ outcome: dry ? "dry run" : "posted", alert, text, provider, imageUrl, id, dryRun: dry });
   } catch (err) {
@@ -3239,13 +3730,14 @@ async function runAlertsMode() {
 }
 
 // ===========================================================================
-// v10.2 NEW: AI-WRITTEN WEEKLY ARTICLE + TELEGRAM APPROVAL
-// (RUN_MODE=weekly-approve; used by weekly-article-telegram.yml)
-// ===========================================================================
+// v10.2 NEW (restored in v11.1): AI-WRITTEN WEEKLY ARTICLE + TELEGRAM
+// APPROVAL (RUN_MODE=weekly-approve; used by weekly-article-telegram.yml)
+// ---------------------------------------------------------------------------
 // 1. Gather the week's data + the headlines this bot posted.
 // 2. The AI writes the article from those facts; validated; template fallback.
 // 3. The WHOLE text is sent to your Telegram, then a Post/Skip message.
-// 4. Tap Post -> it is published to Binance Square (with the chart cover).
+// 4. Tap Post -> it is published to Binance Square (with a branded cover;
+//    the data chart is the fallback cover).
 // Nothing is published without your tap. If you don't tap within
 // WEEKLY_APPROVAL_WAIT_MIN (default 240) the draft is kept in weekly-draft.json.
 // ===========================================================================
@@ -3294,14 +3786,30 @@ async function callAiForArticle(prompt, facts) {
 async function publishWeeklyArticle({ title, body, dayIndex }) {
   const data = await getMarketData({ sparkline: true });
   const featured = rotateSubset(data, MAX_CASHTAGS_PER_POST, dayIndex);
-  const chartConfig = buildWeeklyChartConfig(featured);
   let coverImageUrl = null;
-  if (chartConfig) {
-    try {
-      coverImageUrl = await renderAndUploadChart(chartConfig);
-      console.log("Chart rendered and uploaded for article cover image.");
-    } catch (err) {
-      console.log(`Chart render/upload failed (${err.message}), publishing without cover image.`);
+  // v11.1: one look everywhere — the article gets the branded SVG cover when
+  // the renderer is available, and the rendered 7-day chart as the fallback.
+  try {
+    const svg = buildArticleCoverSvg({
+      kicker: "WEEKLY RECAP",
+      title,
+      coins: featured.filter(Boolean).map((c) => ({ symbol: `$${c.symbol}`, change24h: Number.isFinite(c.change24h) ? c.change24h : null })),
+      footer: `The Tape · ${getWeekRange()}`,
+    });
+    coverImageUrl = await cardToSquareImage(svg, process.env.BINANCE_SQUARE_OPENAPI_KEY);
+    if (coverImageUrl) console.log("Branded cover rendered and uploaded for the article.");
+  } catch (err) {
+    console.log(`Branded cover unavailable (${err.message}) — trying the data-chart cover.`);
+  }
+  if (!coverImageUrl) {
+    const chartConfig = buildWeeklyChartConfig(featured);
+    if (chartConfig) {
+      try {
+        coverImageUrl = await renderAndUploadChart(chartConfig);
+        console.log("Chart rendered and uploaded for article cover image.");
+      } catch (err) {
+        console.log(`Chart render/upload failed (${err.message}), publishing without cover image.`);
+      }
     }
   }
   const id = await postArticleToSquare(title, body, coverImageUrl);
@@ -3378,6 +3886,48 @@ async function runWeeklyApproveMode(dayIndex) {
   console.log(id ? `SUCCESS — posted! View at: https://www.binance.com/square/post/${id}` : "Post likely succeeded, but no ID was returned in the response.");
 }
 
+// v9.5 NEW: writes a compact markdown summary of what a run did to
+// $GITHUB_STEP_SUMMARY — the file GitHub Actions renders directly in a run's
+// "Summary" tab. No separate workflow step is needed: this runs as part of
+// the same "Post to Binance Square" step, since all the data it needs
+// (source, provider, cashtags, hashtags, post ID) only exists here. If the
+// env var isn't set (running locally, or under `node --test`), this is a
+// silent no-op — nothing to configure, nothing that can break outside Actions.
+function writeJobSummary({ style, source, aiProvider, text, imageUrl, id, dryRun }) {
+  const summaryFile = process.env.GITHUB_STEP_SUMMARY;
+  if (!summaryFile) return;
+
+  const cashtags = [...new Set(countCashtags(text))];
+  const hashtags = text.match(/#[A-Za-z]+/g) || [];
+  const postUrl = id && id !== "dry-run-id" ? `https://www.binance.com/square/post/${id}` : null;
+
+  const rows = [
+    ["Style", style],
+    ["Source", aiProvider ? `AI (${aiProvider})` : source],
+    ["Length", `${text.length} chars`],
+    ["Cashtags", cashtags.length ? cashtags.join(", ") : "none"],
+    ["Hashtags", hashtags.length ? hashtags.join(", ") : "none"],
+    ["Image attached", imageUrl ? "yes" : "no"],
+    ["Dry run", dryRun ? "yes" : "no"],
+    ["Post", postUrl ? `[View on Binance Square](${postUrl})` : dryRun ? "n/a (dry run)" : "no ID returned"],
+  ];
+
+  const md = [
+    `### Daily post summary`,
+    ``,
+    `| Field | Value |`,
+    `|---|---|`,
+    ...rows.map(([k, v]) => `| ${k} | ${v} |`),
+    ``,
+  ].join("\n");
+
+  try {
+    fs.appendFileSync(summaryFile, md);
+  } catch (err) {
+    console.log(`  Could not write job summary (${err.message}) — non-fatal.`);
+  }
+}
+
 // ===========================================================================
 // MAIN — smart template selection; weekly article handled by separate modes
 // ===========================================================================
@@ -3413,7 +3963,12 @@ async function main() {
   if (runMode === "news") {
     return runNewsMode();
   }
-  // v10.2: price alerts, and the AI-written weekly article with Telegram approval.
+  // v11: education & research desk. Same Sunday-independence as news.
+  if (runMode === "research") {
+    return runResearchMode();
+  }
+  // v10.2 (restored v11.1): price alerts, and the AI-written weekly article
+  // with Telegram approval.
   if (runMode === "alerts") {
     return runAlertsMode();
   }
@@ -3773,4 +4328,15 @@ export {
   GEMINI_MODEL,
   OPENROUTER_MODEL,
   describeFetchError,
+  sanePositiveBelow,
+  // v11 (exported for test/research-flow.test.mjs and the card pipeline)
+  isSharpMoveStory,
+  buildCardForStory,
+  getCardCoinSnapshot,
+  getCoinPriceHistory,
+  CARD_COIN_IDS,
+  runResearchMode,
+  callAiForResearch,
+  loadResearchStateFile,
+  saveResearchStateFile,
 };

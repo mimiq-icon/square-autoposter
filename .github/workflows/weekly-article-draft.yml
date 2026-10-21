@@ -9,12 +9,14 @@ name: Weekly Article Draft
 #
 # Publishing happens separately, in weekly-article-publish.yml, and only
 # once you add the `approved-for-posting` label to the issue this creates.
+#
+# v10.2 (restored v11.1): the weekly article is now written by the AI and
+# approved on Telegram by weekly-article-telegram.yml. To avoid two articles
+# every Sunday THIS workflow's schedule is switched off (manual runs still
+# work, and the label-approval flow below is unchanged). To go back to the
+# issue-based flow, remove the leading "#" on the three schedule lines and
+# disable the Telegram one.
 
-# v10.2: the weekly article is now written by the AI and approved on Telegram
-# by weekly-article-telegram.yml. To avoid two articles every Sunday THIS
-# workflow's schedule is switched off (manual runs still work, and the
-# label-approval flow below is unchanged). To go back to the issue-based flow,
-# remove the leading "#" on the three schedule lines and disable the Telegram one.
 on:
   # schedule:
   #   # 07:30 UTC every Sunday = 09:30 Harare/CAT time.

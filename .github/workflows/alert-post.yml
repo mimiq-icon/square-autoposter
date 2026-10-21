@@ -1,9 +1,11 @@
 name: Price Alerts
 
-# v10.2: "Bitcoin falls below $83,000", "Ethereum is up 7.3% in 24 hours".
+# v10.2 (restored v11.1): "Bitcoin falls below $83,000", "Ethereum is up 7.3% in 24 hours".
 # Data-driven short posts: Binance's public prices decide WHAT happened, the AI
-# only phrases it (validated against the data; plain template as fallback),
-# with a 48h price chart attached.
+# only phrases it (validated against the data; plain template as fallback).
+# v11.1: the post carries the branded ALERT CARD (24h range bar + price line
+# with the crossed level); without the PNG renderer it falls back to the plain
+# QuickChart price line, then text-only.
 #
 # THE SCHEDULE IS OFF BY DEFAULT because your PC runner (local-runner.mjs)
 # already checks for alerts every cycle, and running both is wasteful (they
@@ -47,6 +49,12 @@ jobs:
         with:
           node-version: 'lts/*'
 
+      # v11.1: same optional renderer the news cards use — turns the alert's
+      # SVG card into a PNG for upload. Without it the run posts the QuickChart
+      # price line instead (then text-only). ~15s per run.
+      - name: Install PNG renderer (optional, for alert cards)
+        run: npm install --no-save @resvg/resvg-js
+
       - name: Check prices and post an alert if one is due
         env:
           RUN_MODE: alerts
@@ -61,7 +69,8 @@ jobs:
           # ALERT_MOVE_PCT: '5'            # alert when a coin moves this % in 24h
           # ALERT_LEVEL_PCT: '1.25'        # round-level spacing as % of price ($1,000 for BTC at ~$80k)
           # ALERT_MAX_PER_DAY: '20'
-          # ALERT_CHART: 'off'             # no chart image
+          # ALERT_CHART: 'off'             # no card/chart image
+          # ALERT_CHART_HOURS: '24'        # price window on the alert card (default: the day's range)
           # ALERT_APPROVAL: 'all'          # needs the two Telegram secrets
           # TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           # TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}

@@ -69,7 +69,7 @@ jobs:
 
       - name: Open GitHub Issue with comments
         if: env.has_body == 'true'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const today = new Date().toISOString().slice(0, 10);

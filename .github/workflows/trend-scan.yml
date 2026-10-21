@@ -9,11 +9,14 @@ name: Trend Scan
 # If the scraper gets blocked, this workflow fails gracefully — your normal
 # daily posting (via official OpenAPI) is unaffected.
 
+# v11: the schedule is switched OFF. This depends on the unofficial
+# binance-square-cli scraper, and a real run confirmed Binance blocks it
+# from GitHub's IPs — the daily schedule just produced failures (and, for
+# competitor-scan, dozens of empty issues). Manual runs still work from the
+# Actions tab, and a home PC usually isn't blocked if you want to try one.
+# Re-add a cron line here if the scraper ever starts working again.
+
 on:
-  schedule:
-    # 12:00 UTC daily = 14:00 Harare (CAT, UTC+2)
-    # Midday slot — catches what's trending after the morning post (08:30 UTC)
-    - cron: '0 12 * * *'
   workflow_dispatch:
     inputs:
       dry_run:

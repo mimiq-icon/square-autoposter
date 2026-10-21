@@ -54,23 +54,26 @@ jobs:
           # The script tries them in order: Groq → OpenRouter → Gemini.
           # If none are set, or all fail, it falls back to template mode.
           #
-          # Groq (recommended primary — free, fast, Llama 3.3 70B):
+          # Groq (recommended primary — free, fast, openai/gpt-oss-120b since v10.2;
+          # Llama 3.3 70B was retired by Groq on 2026-08-16):
           #   Get a key at console.groq.com (no credit card needed)
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
 
           # OpenRouter (fallback — free models available via aggregator):
           #   Get a key at openrouter.ai/keys (no credit card needed for free models)
-          #   Default model: meta-llama/llama-3.3-70b-instruct:free
+          #   Default model: openrouter/free (OpenRouter picks a currently-free model;
+          #   meta-llama/llama-3.3-70b-instruct:free stopped being free)
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
 
-          # Gemini (last resort — free, was flaky):
+          # Gemini (last resort — free tier; gemini-3.8-flash since v10.2, because
+          # gemini-2.0-flash was shut down on 2026-06-01):
           #   Get a key at aistudio.google.com/apikey
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
 
           # Optional model overrides (defaults shown):
-          # GROQ_MODEL: 'llama-3.3-70b-versatile'
-          # OPENROUTER_MODEL: 'meta-llama/llama-3.3-70b-instruct:free'
-          # GEMINI_MODEL: 'gemini-2.0-flash'
+          # GROQ_MODEL: 'openai/gpt-oss-120b'
+          # OPENROUTER_MODEL: 'openrouter/free'
+          # GEMINI_MODEL: 'gemini-3.8-flash'
 
           # v7: Optional CoinGecko Demo API key. Without this, every
           # CoinGecko call shares the worldwide keyless bucket (5-15

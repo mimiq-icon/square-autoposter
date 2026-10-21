@@ -1,0 +1,108 @@
+name: Education and Research Post
+
+# v11: the desk's second content line. Two short, data-grounded education
+# posts a week (Tuesday and Friday), and once a month — the first Saturday —
+# a long-form research article instead. Every piece is written ONLY from
+# facts fetched from free sources (DefiLlama, mempool.space, Wikipedia), a
+# validator rejects anything the facts don't support, and the full text goes
+# to your Telegram for a one-tap approval before anything is published.
+#
+# Schedules (all UTC):
+#   Tue 11:07 and Fri 11:07  -> short explainer post (text + explainer slide)
+#   Sat 11:07                -> the monthly article, but ONLY on the first
+#                               Saturday of the month; other Saturdays run
+#                               and cleanly do nothing (checked in code,
+#                               because cron can't express "first Saturday").
+#
+# Cost: one Actions minute per run, plus ~15s for the PNG renderer install.
+#
+# Approval: if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are set as secrets,
+# the full text arrives on your phone with [Post]/[Skip] and waits up to
+# RESEARCH_APPROVAL_WAIT_MIN minutes (default 120 — you don't need to babysit
+# a scheduled post). No tap = not posted. Set RESEARCH_APPROVAL: 'off' to
+# publish without asking.
+
+on:
+  schedule:
+    - cron: '7 11 * * 2'    # Tuesday
+    - cron: '7 11 * * 5'    # Friday
+    - cron: '7 11 * * 6'    # Saturday (first Saturday only — enforced in code)
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (build everything, publish nothing, save no state)'
+        required: false
+        type: boolean
+        default: true
+      mode:
+        description: 'auto | short | article'
+        required: false
+        type: choice
+        default: 'auto'
+        options: ['auto', 'short', 'article']
+      install_renderer:
+        description: 'Install the PNG renderer for the explainer slide/cover (~15s)'
+        required: false
+        type: boolean
+        default: true
+      force:
+        description: 'Force a run even if this topic already ran today'
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: research-post
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 'lts/*'
+
+      # Same optional renderer the news cards use (see news-post.yml). Without
+      # it, posts go out text-only.
+      - name: Install PNG renderer (optional, for explainer slides)
+        if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.install_renderer != 'false' }}
+        run: npm install --no-save @resvg/resvg-js
+
+      - name: Research, write, validate
+        env:
+          RUN_MODE: research
+          RESEARCH_MODE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.mode || 'auto' }}
+          RESEARCH_FORCE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.force || 'false' }}
+          RESEARCH_STATE_FILE: research-state/published.json
+          BINANCE_SQUARE_OPENAPI_KEY: ${{ secrets.BINANCE_SQUARE_OPENAPI_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OLLAMA_MODEL: ${{ secrets.OLLAMA_MODEL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          # Approval: on by default when Telegram is configured. 'off' publishes
+          # without asking. RESEARCH_APPROVAL_WAIT_MIN: '120' to change the wait.
+          # RESEARCH_APPROVAL: 'on'
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'true' }}
+        run: node post.mjs
+
+      # The state file is the topic-rotation memory (which pieces ran
+      # recently) and the same-day rerun guard. Commit it if it changed.
+      - name: Save research state
+        if: ${{ !(github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'true') }}
+        run: |
+          git config user.name "square-autoposter-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add research-state/published.json
+          git diff --cached --quiet || git commit -m "research: update topic rotation state"
+          git push

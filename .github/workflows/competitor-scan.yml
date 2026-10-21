@@ -10,11 +10,14 @@ name: Competitor Research
 #   3. CryptoPM
 #   4. hmnghia0612
 
+# v11: the schedule is switched OFF. This depends on the unofficial
+# binance-square-cli scraper (blocked from GitHub's IPs — it had been filing
+# dozens of empty issues). Manual runs still work from the Actions tab, and
+# a home PC usually isn't blocked if you want to try one. Close the old
+# empty issues if they clutter the tracker.
+# Re-add a cron line here if the scraper ever starts working again.
+
 on:
-  schedule:
-    # 06:00 UTC daily = 08:00 Harare (CAT, UTC+2)
-    # Morning — review before your own post goes out at 08:30 UTC
-    - cron: '0 6 * * *'
   workflow_dispatch: {}
 
 permissions:
@@ -58,7 +61,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Open GitHub Issue
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const today = new Date().toISOString().slice(0, 10);

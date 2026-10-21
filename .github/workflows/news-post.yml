@@ -33,6 +33,11 @@ on:
         required: false
         type: string
         default: ''
+      install_renderer:
+        description: 'Install the PNG renderer for news cards (~15s per run)'
+        required: false
+        type: boolean
+        default: true
 
 # Two overlapping runs of THIS workflow queue instead of cancelling. (Races with
 # your PC are handled by the git claim lock, not by this.)
@@ -58,6 +63,15 @@ jobs:
         with:
           node-version: 'lts/*'
 
+      # v11: news posts carry a branded card image. The card is drawn as SVG in
+      # pure code; this optional native library turns it into a PNG for upload.
+      # Without it the bot still posts, just without the image (it logs the
+      # reason). ~15s of install time per run. Set input install_renderer to
+      # false (or delete this step) to post text-only.
+      - name: Install PNG renderer (optional, for news cards)
+        if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.install_renderer != 'false' }}
+        run: npm install --no-save @resvg/resvg-js
+
       - name: Find and post the top news story
         env:
           RUN_MODE: news
@@ -74,6 +88,13 @@ jobs:
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'true' }}
           NEWS_MIN_SCORE: ${{ github.event.inputs.min_score }}
 
+          # v11: branded card image on every news post (off = text-only).
+          # NEWS_CARDS: 'true'
+          # Chart windows on the cards: alerts show the day's range, news cards
+          # show the week behind the story. Change either without touching code.
+          # ALERT_CHART_HOURS: '24'
+          # NEWS_CHART_HOURS: '168'
+
           # --- Optional tuning (uncomment to change) ---
           # NEWS_MIN_GAP_MIN: '5'         # minimum minutes between posts, shared with the PC
           #
@@ -84,14 +105,12 @@ jobs:
           # TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           # TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           # NEWS_MAX_PER_DAY: '40'        # hard daily cap (default 40). Binance allows 100 API posts/day in total, shared by every post type
-          # NEWS_DISCLAIMER: 'off'        # news posts end with a rotating short disclaimer; 'off' removes it
-          # NEWS_CHART: 'off'             # news posts about a tracked coin attach a 48h price chart; 'off' removes it
           # NEWS_MAX_AGE_HOURS: '6'       # ignore stories older than this
           # NEWS_REQUIRE_AI: 'true'       # skip a story rather than post the plain-headline fallback
           # NEWS_EXTRA_FEEDS: 'Name|https://example.com/rss,Name2|https://other.com/feed'
           #
           # Cross-post news to X too. Off by default: X bills per post, and
-          # this can be dozens of posts a day. Needs the 4 TWITTER_* secrets.
+          # this can be up to 12 posts a day. Needs the 4 TWITTER_* secrets.
           # NEWS_CROSSPOST_X: 'true'
           # TWITTER_API_KEY: ${{ secrets.TWITTER_API_KEY }}
           # TWITTER_API_SECRET: ${{ secrets.TWITTER_API_SECRET }}

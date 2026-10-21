@@ -46,7 +46,7 @@ jobs:
 
       - name: Fetch the draft issue's current body
         id: fetch
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         # v9.4 FIX: issue_number used to be spliced straight into the script
         # source via ${{ github.event.inputs.issue_number }} — a template
         # expansion, not a variable read. Anyone able to trigger
@@ -118,7 +118,7 @@ jobs:
 
       - name: Close the issue and link the live post
         if: success()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         # v9.4: same fix as the "Fetch" step above — read via env instead of
         # splicing the prior step's output into the script source. This
         # value is our own validated integer output, so the risk here was

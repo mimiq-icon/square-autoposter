@@ -29,6 +29,16 @@
       "price": 106.9,
       "at": 1792574522387,
       "status": "pending"
+    },
+    {
+      "id": "XRP:move:up",
+      "symbol": "XRP",
+      "kind": "move",
+      "dir": "up",
+      "level": null,
+      "price": 1.3608,
+      "at": 1792574970609,
+      "status": "pending"
     }
   ]
 }

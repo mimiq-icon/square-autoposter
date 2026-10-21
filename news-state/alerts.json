@@ -9,6 +9,16 @@
       "price": 0.2249,
       "at": 1792572063981,
       "status": "posted"
+    },
+    {
+      "id": "DOGE:level:up:0.082",
+      "symbol": "DOGE",
+      "kind": "level",
+      "dir": "up",
+      "level": 0.082,
+      "price": 0.08202,
+      "at": 1792573885118,
+      "status": "pending"
     }
   ]
 }

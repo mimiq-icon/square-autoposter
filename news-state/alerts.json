@@ -1,0 +1,14 @@
+{
+  "fired": [
+    {
+      "id": "ADA:level:down:0.225",
+      "symbol": "ADA",
+      "kind": "level",
+      "dir": "down",
+      "level": 0.225,
+      "price": 0.2249,
+      "at": 1792572063981,
+      "status": "pending"
+    }
+  ]
+}

@@ -39,6 +39,16 @@
       "price": 1.3608,
       "at": 1792574970609,
       "status": "pending"
+    },
+    {
+      "id": "ADA:move:up",
+      "symbol": "ADA",
+      "kind": "move",
+      "dir": "up",
+      "level": null,
+      "price": 0.2263,
+      "at": 1792575410644,
+      "status": "pending"
     }
   ]
 }

@@ -82,7 +82,7 @@
       "link": "https://cointelegraph.com/markets/ether-etf-outflows-near-1-1-billion-october?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
       "source": "Cointelegraph",
       "at": 1792570613688,
-      "status": "pending",
+      "status": "skipped",
       "etfFlow": "ETH"
     }
   ]

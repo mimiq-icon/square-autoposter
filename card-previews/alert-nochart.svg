@@ -2,9 +2,8 @@
 <rect width="1080" height="1080" fill="#0B0E11"/>
 <rect x="6" y="6" width="1068" height="1068" rx="18" fill="#0B0E11" stroke="#2A313C" stroke-width="2"/>
 <g transform="translate(54 56) scale(0.4600)">
-<rect x="6" y="9" width="88" height="32" rx="7" fill="#F0B90B"/>
+<path d="M13 9 H87 A7 7 0 0 1 94 16 V34 A7 7 0 0 1 87 41 H73 A10 10 0 0 0 63 51 V85 A7 7 0 0 1 56 92 H44 A7 7 0 0 1 37 85 V51 A10 10 0 0 0 27 41 H13 A7 7 0 0 1 6 34 V16 A7 7 0 0 1 13 9 Z" fill="#F0B90B"/>
 <circle cx="20" cy="25" r="3.6" fill="#0B0E11"/><circle cx="35" cy="25" r="3.6" fill="#0B0E11"/><circle cx="50" cy="25" r="3.6" fill="#0B0E11"/><circle cx="65" cy="25" r="3.6" fill="#0B0E11"/><circle cx="80" cy="25" r="3.6" fill="#0B0E11"/>
-<rect x="37" y="34" width="26" height="58" rx="6" fill="#F0B90B"/>
 </g>
 <text x="112" y="92" font-size="26" font-weight="800" letter-spacing="4" fill="#F5F7FA">THE TAPE</text>
 <rect x="56" y="130" width="210" height="42" rx="8" fill="#0ECB81"/>
@@ -19,6 +18,5 @@
 <text x="56" y="642" font-size="18" fill="#8B95A5">low $2,960</text>
 <text x="1024" y="642" text-anchor="end" font-size="18" fill="#8B95A5">high $3,150</text>
 <text x="56" y="760" font-size="34" font-weight="700" fill="#F5F7FA">Ethereum jumps 5.4% in 24 hours</text>
-<line x1="56" y1="970" x2="1024" y2="970" stroke="#2A313C" stroke-width="1"/>
-<text x="56" y="1000" font-size="18" fill="#8B95A5">Binance</text>
+
 </svg>

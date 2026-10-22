@@ -2,8 +2,7 @@
 <defs><radialGradient id="g" cx="50%" cy="42%" r="70%"><stop offset="0" stop-color="#1B222C"/><stop offset="1" stop-color="#0B0E11"/></radialGradient></defs>
 <rect width="1024" height="1024" fill="url(#g)"/>
 <g transform="translate(225.27999999999997 215.03999999999996) scale(5.7344)">
-<rect x="6" y="9" width="88" height="32" rx="7" fill="#F0B90B"/>
+<path d="M13 9 H87 A7 7 0 0 1 94 16 V34 A7 7 0 0 1 87 41 H73 A10 10 0 0 0 63 51 V85 A7 7 0 0 1 56 92 H44 A7 7 0 0 1 37 85 V51 A10 10 0 0 0 27 41 H13 A7 7 0 0 1 6 34 V16 A7 7 0 0 1 13 9 Z" fill="#F0B90B"/>
 <circle cx="20" cy="25" r="3.6" fill="#151B24"/><circle cx="35" cy="25" r="3.6" fill="#151B24"/><circle cx="50" cy="25" r="3.6" fill="#151B24"/><circle cx="65" cy="25" r="3.6" fill="#151B24"/><circle cx="80" cy="25" r="3.6" fill="#151B24"/>
-<rect x="37" y="34" width="26" height="58" rx="6" fill="#F0B90B"/>
 </g>
 </svg>

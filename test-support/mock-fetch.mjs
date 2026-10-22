@@ -62,7 +62,8 @@ globalThis.fetch = async (url, opts = {}) => {
   if (u.includes("api.coingecko.com")) return coingeckoMock(u);
   if (u.includes("alternative.me")) return json({ data: [{ value: "59", value_classification: "Greed" }] });
   if (u.includes("quickchart.io")) { log("quickchart"); return new Response(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), { status: 200 }); }
-  if (u.includes("/image/presignedUrl")) return json({ code: "000000", data: { presignedUrl: "https://s3.example.test/put", fileTicket: "t1" } });
+  if (u.includes("en.wikipedia.org/api/rest_v1/page/summary/")) { const title = decodeURIComponent(u.split("/summary/")[1] || "Topic"); return json({ title, extract: title === "Stablecoin" ? "A stablecoin is a type of cryptocurrency designed to keep a steady value relative to a reference asset such as the US dollar." : `${title} is a topic in crypto.` }); }
+  if (u.includes("/image/presignedUrl")) { log("IMAGE-UPLOAD"); return json({ code: "000000", data: { presignedUrl: "https://s3.example.test/put", fileTicket: "t1" } }); }
   if (u.includes("s3.example.test")) return new Response("", { status: 200 });
   if (u.includes("/image/imageStatus")) return json({ code: "000000", data: { status: 1, imageUrl: "https://img.example.test/chart.png" } });
   const host = Object.keys(FEEDS).find((h) => u.includes(h));
@@ -86,6 +87,7 @@ globalThis.fetch = async (url, opts = {}) => {
   }
   if (u.includes("api.telegram.org")) {
     const method = u.split("/").pop();
+    if (method === "sendPhoto") { const f = opts.body; const photo = f && f.get ? f.get("photo") : null; log("telegram photo " + (photo ? photo.size : 0)); return json({ ok: true, result: { message_id: 7 } }); }
     const body = JSON.parse(opts.body || "{}");
     const ok = (result) => json({ ok: true, result });
     if (method === "sendMessage" && !body.reply_markup) { log("telegram text " + body.text.length); return ok({ message_id: 8 }); }

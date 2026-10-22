@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1080" viewBox="0 0 1080 1080" font-family="DejaVu Sans, Arial, Liberation Sans, Helvetica, sans-serif">
+<rect width="1080" height="1080" fill="#0B0E11"/>
+<rect x="6" y="6" width="1068" height="1068" rx="18" fill="#0B0E11" stroke="#2A313C" stroke-width="2"/>
+<g transform="translate(54 56) scale(0.4600)">
+<rect x="6" y="9" width="88" height="32" rx="7" fill="#F0B90B"/>
+<circle cx="20" cy="25" r="3.6" fill="#0B0E11"/><circle cx="35" cy="25" r="3.6" fill="#0B0E11"/><circle cx="50" cy="25" r="3.6" fill="#0B0E11"/><circle cx="65" cy="25" r="3.6" fill="#0B0E11"/><circle cx="80" cy="25" r="3.6" fill="#0B0E11"/>
+<rect x="37" y="34" width="26" height="58" rx="6" fill="#F0B90B"/>
+</g>
+<text x="112" y="92" font-size="26" font-weight="800" letter-spacing="4" fill="#F5F7FA">THE TAPE</text>
+<rect x="56" y="138" width="104" height="36" rx="7" fill="#F0B90B"/>
+<text x="108" y="163" text-anchor="middle" font-size="17" font-weight="800" letter-spacing="3" fill="#1A1D21">NEWS</text>
+<rect x="56" y="216" width="183" height="38" rx="19" fill="#151B24" stroke="#2A313C" stroke-width="1"/>
+<circle cx="76" cy="235" r="6" fill="#0ECB81"/>
+<text x="94" y="241" font-size="18" font-weight="700" fill="#0ECB81">$ETH  +2.1%</text>
+<rect x="56" y="328" width="6" height="132" rx="3" fill="#F0B90B"/>
+<text x="86" y="377.2" font-size="60" font-weight="800" fill="#F5F7FA">Ethereum staking inflows</text>
+<text x="86" y="447.2" font-size="60" font-weight="800" fill="#F5F7FA">hit a record high</text>
+<text x="56" y="626" font-size="18" fill="#8B95A5">7 days</text>
+<polyline points="56.0,822.6 72.4,790.3 88.8,776.7 105.2,786.6 121.6,807.9 138.0,820.6 154.4,812.3 170.8,787.9 187.3,765.2 203.7,762.1 220.1,782.0 236.5,811.5 252.9,830.0 269.3,824.8 285.7,800.6 302.1,775.5 318.5,767.3 334.9,779.7 351.3,799.9 367.7,808.0 384.1,792.6 400.5,759.7 416.9,728.4 433.4,716.8 449.8,728.7 466.2,751.1 482.6,764.0 499.0,755.7 515.4,731.8 531.8,710.6 548.2,709.3 564.6,730.3 581.0,759.5 597.4,776.2 613.8,768.8 630.2,742.9 646.6,717.1 663.1,709.0 679.5,721.4 695.9,740.6 712.3,747.0 728.7,730.2 745.1,697.0 761.5,667.0 777.9,657.6 794.3,671.7 810.7,695.3 827.1,708.3 843.5,699.9 859.9,676.4 876.3,656.5 892.7,656.7 909.2,678.5 925.6,707.0 942.0,721.7 958.4,711.9 974.8,684.2 991.2,658.0 1007.6,650.0 1024.0,662.4" fill="none" stroke="#0ECB81" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="1024.0" cy="662.4" r="7" fill="#0ECB81"/>
+<text x="1024" y="626" text-anchor="end" font-size="18" fill="#8B95A5">$2,625 high · $2,390 low</text>
+<line x1="56" y1="970" x2="1024" y2="970" stroke="#2A313C" stroke-width="1"/>
+<text x="56" y="1000" font-size="18" fill="#8B95A5">CoinDesk</text>
+</svg>

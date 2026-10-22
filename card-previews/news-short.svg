@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1080" viewBox="0 0 1080 1080" font-family="DejaVu Sans, Arial, Liberation Sans, Helvetica, sans-serif">
+<rect width="1080" height="1080" fill="#0B0E11"/>
+<rect x="6" y="6" width="1068" height="1068" rx="18" fill="#0B0E11" stroke="#2A313C" stroke-width="2"/>
+<g transform="translate(54 56) scale(0.4600)">
+<rect x="6" y="9" width="88" height="32" rx="7" fill="#F0B90B"/>
+<circle cx="20" cy="25" r="3.6" fill="#0B0E11"/><circle cx="35" cy="25" r="3.6" fill="#0B0E11"/><circle cx="50" cy="25" r="3.6" fill="#0B0E11"/><circle cx="65" cy="25" r="3.6" fill="#0B0E11"/><circle cx="80" cy="25" r="3.6" fill="#0B0E11"/>
+<rect x="37" y="34" width="26" height="58" rx="6" fill="#F0B90B"/>
+</g>
+<text x="112" y="92" font-size="26" font-weight="800" letter-spacing="4" fill="#F5F7FA">THE TAPE</text>
+<rect x="56" y="138" width="104" height="36" rx="7" fill="#F0B90B"/>
+<text x="108" y="163" text-anchor="middle" font-size="17" font-weight="800" letter-spacing="3" fill="#1A1D21">NEWS</text>
+<rect x="56" y="216" width="183" height="38" rx="19" fill="#151B24" stroke="#2A313C" stroke-width="1"/>
+<circle cx="76" cy="235" r="6" fill="#F6465D"/>
+<text x="94" y="241" font-size="18" font-weight="700" fill="#F6465D">$SOL  −3.4%</text>
+<rect x="251" y="216" width="183" height="38" rx="19" fill="#151B24" stroke="#2A313C" stroke-width="1"/>
+<circle cx="271" cy="235" r="6" fill="#F6465D"/>
+<text x="289" y="241" font-size="18" font-weight="700" fill="#F6465D">$BTC  −1.2%</text>
+<rect x="56" y="328" width="6" height="412" rx="3" fill="#F0B90B"/>
+<text x="86" y="387.04" font-size="72" font-weight="800" fill="#F5F7FA">SkyAI sells off</text>
+<text x="86" y="471.04" font-size="72" font-weight="800" fill="#F5F7FA">entire Solana</text>
+<text x="86" y="555.04" font-size="72" font-weight="800" fill="#F5F7FA">treasury as it</text>
+<text x="86" y="639.04" font-size="72" font-weight="800" fill="#F5F7FA">launches $201</text>
+<text x="86" y="723.04" font-size="72" font-weight="800" fill="#F5F7FA">million buyback</text>
+<line x1="56" y1="970" x2="1024" y2="970" stroke="#2A313C" stroke-width="1"/>
+<text x="56" y="1000" font-size="18" fill="#8B95A5">The Block  ·  Cointelegraph</text>
+</svg>

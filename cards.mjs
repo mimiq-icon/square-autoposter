@@ -172,6 +172,96 @@ function chipRow(y, coins, brand = BRAND) {
 }
 
 // ---------------------------------------------------------------------------
+// CANDLESTICK CHART (v11.4) — real OHLC bars instead of a bare price line.
+// Each candle is a body (open to close) with a wick (low to high); green when
+// it closed up, red when it closed down. Volume bars sit under the candles when
+// the data has them. The alert / extreme / news cards use it whenever they are
+// given `candles`; with only a `sparkline` they still draw the old line, so
+// nothing that worked before stops working.
+// Candle shape: { open, high, low, close, volume? } — what Binance klines give.
+// ---------------------------------------------------------------------------
+
+// Clean the input and merge neighbours so a chart never has more than `max`
+// bars (96 fifteen-minute candles are unreadable at 1080px; 48 are not).
+export function aggregateCandles(candles, max = 48) {
+  const clean = (Array.isArray(candles) ? candles : [])
+    .map((c) => ({ open: Number(c?.open), high: Number(c?.high), low: Number(c?.low), close: Number(c?.close), volume: Number(c?.volume) }))
+    .filter((c) => [c.open, c.high, c.low, c.close].every(Number.isFinite))
+    .map((c) => ({ ...c, high: Math.max(c.high, c.open, c.close), low: Math.min(c.low, c.open, c.close) }));
+  const group = Math.max(1, Math.ceil(clean.length / Math.max(1, max)));
+  if (group === 1) return clean;
+  const out = [];
+  for (let i = 0; i < clean.length; i += group) {
+    const part = clean.slice(i, i + group);
+    out.push({
+      open: part[0].open,
+      close: part[part.length - 1].close,
+      high: Math.max(...part.map((c) => c.high)),
+      low: Math.min(...part.map((c) => c.low)),
+      volume: part.every((c) => Number.isFinite(c.volume)) ? part.reduce((a, c) => a + c.volume, 0) : NaN,
+    });
+  }
+  return out;
+}
+
+export const hasCandles = (candles) => aggregateCandles(candles).length >= 8;
+
+// Draws candles + optional volume + optional dashed level inside the box
+// (x, y, w, h). Returns { svg, hi, lo } — the highest high and lowest low shown.
+function drawCandles({ x, y, w, h, candles, level = null, brand = BRAND, volume = true, glow = false }) {
+  const cs = aggregateCandles(candles);
+  const withVol = volume && cs.every((c) => Number.isFinite(c.volume) && c.volume >= 0) && cs.some((c) => c.volume > 0);
+  const volH = withVol ? Math.round(h * 0.2) : 0;
+  const plotH = h - volH - (withVol ? 14 : 0);
+  let lo = Math.min(...cs.map((c) => c.low)), hi = Math.max(...cs.map((c) => c.high));
+  const dataLo = lo, dataHi = hi;
+  if (Number.isFinite(level)) { lo = Math.min(lo, level); hi = Math.max(hi, level); }
+  const span = hi - lo || Math.abs(hi) * 0.01 || 1;
+  const pad = 10;
+  const yOf = (v) => y + plotH - ((v - lo) / span) * (plotH - 2 * pad) - pad;
+  const pitch = w / cs.length;
+  const bw = Math.max(3, Math.min(22, pitch * 0.62));
+  const ww = bw >= 8 ? 3 : 2;
+  const f = (n) => n.toFixed(1);
+
+  const grid = [0.25, 0.5, 0.75].map((t) => `<line x1="${x}" y1="${f(y + plotH * t)}" x2="${x + w}" y2="${f(y + plotH * t)}"/>`).join("");
+  const maxV = withVol ? Math.max(...cs.map((c) => c.volume)) : 0;
+  const bodies = [], wicks = [], vols = [];
+  cs.forEach((c, i) => {
+    const cx = x + pitch * (i + 0.5);
+    const tone = c.close >= c.open ? brand.green : brand.red;
+    const top = yOf(Math.max(c.open, c.close)), bot = yOf(Math.min(c.open, c.close));
+    const bh = Math.max(2.5, bot - top);
+    wicks.push(`<line x1="${f(cx)}" y1="${f(yOf(c.high))}" x2="${f(cx)}" y2="${f(yOf(c.low))}" stroke="${tone}" stroke-width="${ww}" stroke-linecap="round"/>`);
+    bodies.push(`<rect x="${f(cx - bw / 2)}" y="${f(top)}" width="${f(bw)}" height="${f(bh)}" rx="1.5" fill="${tone}"/>`);
+    if (withVol) {
+      const vh = Math.max(2, (c.volume / maxV) * volH);
+      vols.push(`<rect x="${f(cx - bw / 2)}" y="${f(y + h - vh)}" width="${f(bw)}" height="${f(vh)}" rx="1.5" fill="${tone}"/>`);
+    }
+  });
+
+  const last = cs[cs.length - 1];
+  const lastTone = last.close >= last.open ? brand.green : brand.red;
+  const lastY = yOf(last.close);
+  let svg = `<g stroke="${brand.border}" stroke-opacity="0.7" stroke-width="1">${grid}</g>`;
+  if (Number.isFinite(level)) {
+    const lvY = yOf(level);
+    // The label sits over the candles, so it gets a background-coloured halo:
+    // the same text twice (stroked, then filled) — no paint-order, which not
+    // every renderer honours.
+    const lvText = (extra) => `<text x="${x}" y="${f(lvY - 10)}" font-size="20" font-weight="700"${extra}>${esc(fmtPrice(level))}</text>`;
+    svg += `\n<line x1="${x}" y1="${f(lvY)}" x2="${x + w}" y2="${f(lvY)}" stroke="${brand.accent}" stroke-width="2" stroke-dasharray="10 8"/>`
+      + `\n${lvText(` fill="${brand.bg}" stroke="${brand.bg}" stroke-width="7" stroke-linejoin="round"`)}`
+      + `\n${lvText(` fill="${brand.accent}"`)}`;
+  }
+  if (withVol) svg += `\n<g opacity="0.4">${vols.join("")}</g>`;
+  if (glow) svg += `\n<g filter="url(#glow)" opacity="0.55">${wicks.join("")}${bodies.join("")}</g>`;
+  svg += `\n${wicks.join("")}\n${bodies.join("")}`;
+  svg += `\n<line x1="${f(x + pitch * (cs.length - 0.5))}" y1="${f(lastY)}" x2="${x + w}" y2="${f(lastY)}" stroke="${lastTone}" stroke-width="2" stroke-dasharray="2 6" stroke-linecap="round"/>`;
+  return { svg, hi: dataHi, lo: dataLo };
+}
+
+// ---------------------------------------------------------------------------
 // 1. NEWS CARD — the hook. One big headline, who said it, which coins moved.
 //    Nothing on the card is repeated from the post text: the text carries the
 //    story, the card carries the headline. (v11.2: no "Source:" twice, no
@@ -186,10 +276,12 @@ export function buildNewsCardSvg({
   disclaimer = "",           // accepted for compatibility; the card no longer prints it
   sparkline = null,          // [{ p: number }] or null
   sparklineLabel = "7 days",
+  candles = null,            // [{ open, high, low, close }] — drawn as candlesticks, wins over sparkline
   brand = BRAND,
 }) {
   const W = 1080, H = 1080, PAD = 56;
-  const hasSpark = Array.isArray(sparkline) && sparkline.length >= 8;
+  const useCandles = hasCandles(candles);
+  const hasSpark = useCandles || (Array.isArray(sparkline) && sparkline.length >= 8);
   const len = String(headline ?? "").length;
   // Size tiers: short headlines get big type, long ones step down. Char budgets
   // are conservative for bold DejaVu (~0.56em per glyph) inside a 940px column.
@@ -231,6 +323,12 @@ export function buildNewsCardSvg({
     const chartTop = Math.max(y + 56, 640);
     const chartH = Math.min(200, H - 130 - 70 - chartTop);
     const chartW = W - PAD * 2;
+    if (useCandles) {
+      const c = drawCandles({ x: PAD, y: chartTop, w: chartW, h: chartH, candles, volume: false, brand });
+      parts.push(`<text x="${PAD}" y="${chartTop - 14}" font-size="18" fill="${brand.muted}">${esc(sparklineLabel)}</text>
+${c.svg}
+<text x="${PAD + chartW}" y="${chartTop - 14}" text-anchor="end" font-size="18" fill="${brand.muted}">${esc(fmtPrice(c.hi))} high · ${esc(fmtPrice(c.lo))} low</text>`);
+    } else {
     const vals = sparkline.map((d) => d.p);
     const min = Math.min(...vals), max = Math.max(...vals);
     const span = max - min || 1;
@@ -242,6 +340,7 @@ export function buildNewsCardSvg({
 <polyline points="${xy.map(([a, b]) => `${a.toFixed(1)},${b.toFixed(1)}`).join(" ")}" fill="none" stroke="${tone}" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/>
 <circle cx="${lx.toFixed(1)}" cy="${ly.toFixed(1)}" r="7" fill="${tone}"/>
 <text x="${PAD + chartW}" y="${chartTop - 14}" text-anchor="end" font-size="18" fill="${brand.muted}">${esc(fmtPrice(max))} high · ${esc(fmtPrice(min))} low</text>`);
+    }
   }
 
   const src = String(source ?? "").split(/,\s*/).filter(Boolean).join("  ·  ");
@@ -268,6 +367,7 @@ export function buildAlertCardSvg({
   disclaimer = "",           // accepted for compatibility; the card no longer prints it
   sparkline = null,
   sparklineLabel = "24h",
+  candles = null,            // [{ open, high, low, close, volume? }] — candlesticks, win over sparkline
   level = null,
   brand = BRAND,
 }) {
@@ -292,7 +392,16 @@ export function buildAlertCardSvg({
   const hasSpark = sparkVals.length >= 8;
   let headlineTop = 780, headlineLines = 3, headlineChars = 40;
 
-  if (hasSpark) {
+  if (hasCandles(candles)) {
+    const chartTop = 530, chartH = 290, chartW = W - PAD * 2;
+    const c = drawCandles({ x: PAD, y: chartTop, w: chartW, h: chartH, candles, level, brand });
+    const hi = Number.isFinite(high) ? Math.max(high, c.hi) : c.hi;
+    const lo = Number.isFinite(low) ? Math.min(low, c.lo) : c.lo;
+    parts.push(`<text x="${PAD}" y="${chartTop - 14}" font-size="18" fill="${brand.muted}">${esc(sparklineLabel)}</text>
+<text x="${PAD + chartW}" y="${chartTop - 14}" text-anchor="end" font-size="18" fill="${brand.muted}">${esc(fmtPrice(hi))} high · ${esc(fmtPrice(lo))} low</text>
+${c.svg}`);
+    headlineTop = 876; headlineLines = 2; headlineChars = 40;
+  } else if (hasSpark) {
     const chartTop = 540, chartH = 250, chartW = W - PAD * 2;
     let min = Math.min(...sparkVals), max = Math.max(...sparkVals);
     const hi = Number.isFinite(high) ? Math.max(high, max) : max;
@@ -342,14 +451,23 @@ export function buildAlertCardSvg({
 // BRAND MARK — a "T" whose crossbar is a strip of ticker tape (sprocket holes).
 // Drawn in a 100-unit box so it scales from a 34px card lockup to a 1024px
 // profile picture. One source of truth: cards and avatar both call this.
+//
+// v11.4: the T is ONE outline now. It used to be two rounded rectangles (a tape
+// strip plus a separate stem), and the stem's bare rounded top meeting the
+// strip's flat underside made the bottom read as an "I" stuck under a bar. The
+// single path below has curved (filleted) shoulders where the stem leaves the
+// crossbar, so it reads as one continuous letter. The old stem also ran under
+// the strip; this one starts exactly at it, so there is no overlap to hide.
 // ---------------------------------------------------------------------------
+export const BRAND_MARK_PATH =
+  "M13 9 H87 A7 7 0 0 1 94 16 V34 A7 7 0 0 1 87 41 H73 A10 10 0 0 0 63 51 V85 " +
+  "A7 7 0 0 1 56 92 H44 A7 7 0 0 1 37 85 V51 A10 10 0 0 0 27 41 H13 A7 7 0 0 1 6 34 V16 A7 7 0 0 1 13 9 Z";
 export function brandMarkSvg(x, y, size, brand = BRAND) {
   const k = size / 100;
   const holes = [20, 35, 50, 65, 80].map((cx) => `<circle cx="${cx}" cy="25" r="3.6" fill="${brand.bg}"/>`).join("");
   return `<g transform="translate(${x} ${y}) scale(${k.toFixed(4)})">
-<rect x="6" y="9" width="88" height="32" rx="7" fill="${brand.accent}"/>
+<path d="${BRAND_MARK_PATH}" fill="${brand.accent}"/>
 ${holes}
-<rect x="37" y="34" width="26" height="58" rx="6" fill="${brand.accent}"/>
 </g>`;
 }
 
@@ -381,6 +499,7 @@ export function buildExtremeAlertCardSvg({
   headline = "",
   source = "",
   sparkline = null,
+  candles = null,            // [{ open, high, low, close, volume? }] — glowing candlesticks, win over sparkline
   level = null,
   brand = BRAND,
 }) {
@@ -420,7 +539,11 @@ export function buildExtremeAlertCardSvg({
   }
 
   let headlineTop = 840;
-  if (hasLine) {
+  if (hasCandles(candles)) {
+    const chartTop = 520, chartH = 300, chartW = W - PAD * 2;
+    parts.push(drawCandles({ x: PAD, y: chartTop, w: chartW, h: chartH, candles, level, brand, glow: true }).svg);
+    headlineTop = 866;
+  } else if (hasLine) {
     const chartTop = 540, chartH = 250, chartW = W - PAD * 2;
     let min = Math.min(...vals), max = Math.max(...vals);
     if (Number.isFinite(level)) { min = Math.min(min, level); max = Math.max(max, level); }

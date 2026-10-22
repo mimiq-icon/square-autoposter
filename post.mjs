@@ -3492,7 +3492,7 @@ async function fetchBinanceKlines(pair, interval, limit) {
   });
   if (!res.ok) throw new Error(`Binance klines error: ${res.status}`);
   const rows = await res.json();
-  return rows.map((r) => ({ openTime: r[0], open: parseFloat(r[1]), high: parseFloat(r[2]), low: parseFloat(r[3]), close: parseFloat(r[4]) }));
+  return rows.map((r) => ({ openTime: r[0], open: parseFloat(r[1]), high: parseFloat(r[2]), low: parseFloat(r[3]), close: parseFloat(r[4]), volume: parseFloat(r[5]) }));
 }
 
 async function fetchAlertSnapshots(symbols, lookbackMin) {
@@ -3703,9 +3703,11 @@ async function runAlertsMode() {
       const alertHours = envNumber("ALERT_CHART_HOURS", 24);
       const win = chartWindow(alertHours);
       let closes = null;
+      let candles = null; // v11.4: the cards draw real candlesticks from these
       try {
         const k = await fetchBinanceKlines(`${alert.symbol}USDT`, win.interval, win.limit);
         closes = k.map((c) => c.close);
+        candles = k;
       } catch (err) {
         console.log(`  Price history unavailable (${err.message}) — the card will render without the price line.`);
       }
@@ -3716,7 +3718,7 @@ async function runAlertsMode() {
           ? buildExtremeAlertCardSvg({
               symbol: `$${alert.symbol}`, price: alert.price, heroPct: ext.pct, heroLabel: ext.label,
               change24h: Number.isFinite(alert.change24h) ? alert.change24h : null,
-              headline: copy.headline, source: process.env.CARD_HANDLE || "", sparkline, level,
+              headline: copy.headline, source: process.env.CARD_HANDLE || "", sparkline, candles, level,
             })
           : buildAlertCardSvg({
               symbol: `$${alert.symbol}`, price: alert.price,
@@ -3724,7 +3726,7 @@ async function runAlertsMode() {
               low: Number.isFinite(alert.low24h) ? alert.low24h : null,
               high: Number.isFinite(alert.high24h) ? alert.high24h : null,
               windowLabel: `${win.hours}h range`, headline: copy.headline, source: process.env.CARD_HANDLE || "",
-              sparkline, sparklineLabel: `${win.hours}h`, level,
+              sparkline, candles, sparklineLabel: `${win.hours}h`, level,
             });
         alertCard = { svg, win, closes };
       } catch (cardErr) {

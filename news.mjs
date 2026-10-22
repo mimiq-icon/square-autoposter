@@ -888,7 +888,7 @@ export const DEFAULT_NEWS_DISCLAIMER = "Not financial advice.";
 export const NEWS_DISCLAIMER_VARIANTS = [
   "Not financial advice.",
   "Not financial advice — for information only.",
-  "Reporting only, not trading advice.",
+  "Not financial advice. Do your own research.",
 ];
 export function resolveNewsDisclaimer(value) {
   const v = String(value ?? "").trim();

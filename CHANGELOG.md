@@ -2,6 +2,14 @@
 
 Reconstructed from the version-tagged comments already in `post.mjs` and `scan.mjs` (every change in this codebase has always been commented in place with a `vN` marker) plus this pass's own work. If you're looking for *why* a particular line exists, search the source for its version tag first — the reasoning usually lives right there.
 
+## v11.4 (candlestick charts, one-piece T, plainer disclaimer)
+
+- **Real candlestick charts.** Alert and extreme-move cards now draw proper OHLC candles (green body = closed up, red = closed down, wicks for high/low) with a volume strip underneath, the 24h high/low in the caption, the last close dotted across, and the crossed level still dashed. Extreme cards get the same candles with a glow. Binance already returns open/high/low/close/volume for the price history the bot fetched, so no new request is made. More than 48 candles are merged into 48 so the chart stays readable (`aggregateCandles`). News cards accept `candles` too. If only closing prices are available the old line is drawn, so nothing regresses.
+- **The T is one piece.** The mark is a single outline with curved shoulders where the stem leaves the tape strip (it used to be two rounded rectangles, and the bare stem read as an "I" under a bar). `brand/the-tape-avatar.svg/.png` regenerated.
+- **Disclaimer:** "Reporting only, not trading advice." is gone from the rotation; the third news variant is now "Not financial advice. Do your own research."
+- **Windows test fix:** the end-to-end tests passed `--import C:\...` to Node, which Windows rejects (`ERR_UNSUPPORTED_ESM_URL_SCHEME`, 26 failures in `dry-run-all`). They now pass a `file://` URL. The bot itself was never affected.
+- **Tests:** 360 (new: candle aggregation, colours, volume, fallback, extreme/news candles, single-path mark).
+
 ## v11.3 (see what you approve, know what you run, dry-run everything)
 
 - **You now SEE the card before you approve.** Cards used to be built after your tap, so Telegram showed only the text. News, alert (extreme moves) and research posts now send the exact card as a photo, *then* the Post/Skip buttons. The image is uploaded to Square only after you approve, so a skipped draft costs no upload (Binance allows 400 a day). A failed preview is non-fatal.

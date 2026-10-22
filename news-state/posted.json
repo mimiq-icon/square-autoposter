@@ -1,13 +1,6 @@
 {
   "posted": [
     {
-      "title": "Bitmine adds 12,535 ETH as treasury reaches 6.04 million tokens",
-      "link": "https://www.theblock.co/news/business/2026-10-19-bitmine-adds-12535-eth-as-treasury-reaches-6-04-million-tokens-421018",
-      "source": "The Block",
-      "at": 1792420700483,
-      "status": "posted"
-    },
-    {
       "title": "SkyAI sells off entire Solana treasury as it launches $201 million buyback",
       "link": "https://www.theblock.co/news/business/2026-10-19-skyai-sells-off-entire-solana-treasury-launches-201-million-buyback-421037",
       "source": "The Block",
@@ -106,6 +99,13 @@
       "at": 1792663635489,
       "status": "posted",
       "etfFlow": "BTC"
+    },
+    {
+      "title": "Fireblocks Denies Report of $2.5 Billion Visa Takeover Talks",
+      "link": "https://bitcoinmagazine.com/news/fireblocks-denies-report-of-visa-takeover",
+      "source": "Bitcoin Magazine",
+      "at": 1792680332232,
+      "status": "pending"
     }
   ]
 }

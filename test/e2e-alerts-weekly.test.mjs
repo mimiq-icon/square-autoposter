@@ -7,10 +7,11 @@ import { execFileSync, spawn } from "child_process";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { fileURLToPath } from "url";
+import { fileURLToPath, pathToFileURL } from "url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const MOCK = path.join(ROOT, "test-support", "mock-fetch.mjs");
+// --import needs a file:// URL on Windows (a bare C:\\ path throws ERR_UNSUPPORTED_ESM_URL_SCHEME)
+const MOCK = pathToFileURL(path.join(ROOT, "test-support", "mock-fetch.mjs")).href;
 let hasGit = true;
 try { execFileSync("git", ["--version"], { stdio: "ignore" }); } catch { hasGit = false; }
 const sh = (cwd, ...a) => execFileSync("git", a, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();

@@ -168,7 +168,10 @@ describe("assembly and disclaimers", () => {
     assert.equal(resolveNewsDisclaimer("  Your custom line. "), "Your custom line.");
     assert.equal(pickNewsDisclaimer(0), NEWS_DISCLAIMER_VARIANTS[0]);
     assert.equal(pickNewsDisclaimer(1), NEWS_DISCLAIMER_VARIANTS[1]);
-    assert.equal(pickNewsDisclaimer(3), NEWS_DISCLAIMER_VARIANTS[0], "wraps");
-    assert.equal(pickNewsDisclaimer(-2), NEWS_DISCLAIMER_VARIANTS[2], "negative seeds are fine");
+    const n = NEWS_DISCLAIMER_VARIANTS.length;
+    assert.equal(pickNewsDisclaimer(n), NEWS_DISCLAIMER_VARIANTS[0], "wraps");
+    assert.equal(pickNewsDisclaimer(-1), NEWS_DISCLAIMER_VARIANTS[1], "negative seeds are fine");
+    assert.ok(NEWS_DISCLAIMER_VARIANTS.every((v) => /not financial advice/i.test(v)), "every variant says it plainly");
+    assert.ok(!NEWS_DISCLAIMER_VARIANTS.some((v) => /reporting only|trading advice/i.test(v)), "the retired 'Reporting only' line stays gone");
   });
 });

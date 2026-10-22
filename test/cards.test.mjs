@@ -9,6 +9,7 @@ import {
   BRAND, esc, wrapText, fmtSignedPct, fmtUsdCompact, fmtPrice,
   buildNewsCardSvg, buildAlertCardSvg, buildExplainerSlideSvg, buildBarChartSvg,
   buildStatGridSvg, buildLineChartSvg, buildArticleCoverSvg, renderSvgToPng,
+  buildExtremeAlertCardSvg, brandMarkSvg, aggregateCandles, hasCandles,
 } from "../cards.mjs";
 
 const HEADLINE = "Solana treasury firm SkyAI sells all SOL holdings after $201 million buyback";
@@ -248,5 +249,81 @@ describe("v11.2 brand mark, avatar and extreme alert card", () => {
     const { buildExtremeAlertCardSvg } = await import("../cards.mjs");
     const svg = buildExtremeAlertCardSvg({ symbol: "$X", heroPct: -9, headline: "<script>&" });
     assert.ok(!svg.includes("<script>"));
+  });
+});
+
+describe("v11.4 candlestick charts and the one-piece T", () => {
+  const walk = (n, base = 100) => Array.from({ length: n }, (_, i) => {
+    const open = base + Math.sin(i) * 3, close = base + Math.sin(i + 1) * 3;
+    return { open, close, high: Math.max(open, close) + 1, low: Math.min(open, close) - 1, volume: 10 + i };
+  });
+
+  test("aggregateCandles caps the bar count and keeps true open / close / high / low / volume", () => {
+    const raw = walk(96);
+    const out = aggregateCandles(raw, 48);
+    assert.equal(out.length, 48);
+    assert.equal(out[0].open, raw[0].open);
+    assert.equal(out[0].close, raw[1].close);
+    assert.equal(out[0].high, Math.max(raw[0].high, raw[1].high));
+    assert.equal(out[0].low, Math.min(raw[0].low, raw[1].low));
+    assert.equal(out[0].volume, raw[0].volume + raw[1].volume);
+    assert.equal(aggregateCandles(walk(20), 48).length, 20, "short series are untouched");
+  });
+
+  test("aggregateCandles drops junk rows and repairs impossible highs/lows", () => {
+    const out = aggregateCandles([{ open: 1, high: 0.5, low: 2, close: 1.5 }, { open: NaN, high: 1, low: 1, close: 1 }, null], 48);
+    assert.equal(out.length, 1);
+    assert.equal(out[0].high, 1.5);
+    assert.equal(out[0].low, 1);
+    assert.ok(!hasCandles(walk(7)) && hasCandles(walk(8)));
+  });
+
+  test("alert card with candles draws bodies, wicks and volume bars, not a line", () => {
+    const svg = buildAlertCardSvg({ symbol: "$BTC", price: 100, change24h: -2, headline: "H", candles: walk(96), level: 98 });
+    assert.ok(!svg.includes("<polyline"), "no price line");
+    assert.equal((svg.match(/rx="1.5"/g) || []).length, 48 * 2, "48 bodies + 48 volume bars");
+    assert.match(svg, /stroke-linecap="round"\/>/);
+    assert.match(svg, /high · .* low/);
+    assert.match(svg, /stroke-dasharray="10 8"/, "level line still drawn");
+    assert.ok(!svg.includes("paint-order"));
+  });
+
+  test("candles are green when they close up and red when they close down", () => {
+    const svg = buildAlertCardSvg({ symbol: "$X", price: 1, headline: "H", candles: [
+      ...Array.from({ length: 4 }, () => ({ open: 1, close: 2, high: 2.5, low: 0.5 })),
+      ...Array.from({ length: 4 }, () => ({ open: 2, close: 1, high: 2.5, low: 0.5 })),
+    ] });
+    assert.equal((svg.match(new RegExp(`<rect[^>]*rx="1.5" fill="${BRAND.green}"`, "g")) || []).length, 4);
+    assert.equal((svg.match(new RegExp(`<rect[^>]*rx="1.5" fill="${BRAND.red}"`, "g")) || []).length, 4);
+  });
+
+  test("no volume in the data => no volume bars; too few candles => falls back to the line", () => {
+    const noVol = walk(30).map(({ volume, ...c }) => c);
+    const a = buildAlertCardSvg({ symbol: "$BTC", price: 100, headline: "H", candles: noVol });
+    assert.equal((a.match(/rx="1.5"/g) || []).length, 30);
+    const spark = Array.from({ length: 12 }, (_, i) => ({ p: 100 + i }));
+    const b = buildAlertCardSvg({ symbol: "$BTC", price: 100, headline: "H", candles: walk(3), sparkline: spark });
+    assert.match(b, /<polyline points="/);
+  });
+
+  test("extreme and news cards take candles too (extreme glows)", () => {
+    const e = buildExtremeAlertCardSvg({ symbol: "$BTC", price: 100, heroPct: -9, headline: "H", candles: walk(48) });
+    assert.ok(!e.includes("<polyline"));
+    assert.match(e, /<g filter="url\(#glow\)"/);
+    const n = buildNewsCardSvg({ headline: "Ethereum staking inflows hit a record high", source: "CoinDesk", candles: walk(40) });
+    assert.ok(!n.includes("<polyline"));
+    assert.equal((n.match(/rx="1.5"/g) || []).length, 40, "news cards skip the volume strip");
+  });
+
+  test("candle cards are deterministic and escape nothing they should not need to", () => {
+    const o = { symbol: "$BTC", price: 100, headline: "H", candles: walk(48), level: 99 };
+    assert.equal(buildAlertCardSvg(o), buildAlertCardSvg(o));
+  });
+
+  test("the T is a single outline: one path, no separate stem rectangle", () => {
+    const svg = brandMarkSvg(0, 0, 100);
+    assert.equal((svg.match(/<path /g) || []).length, 1);
+    assert.ok(!/<rect/.test(svg), "no stacked rectangles that could read as an 'I'");
+    assert.equal((svg.match(/<circle/g) || []).length, 5, "five tape holes");
   });
 });

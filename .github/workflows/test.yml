@@ -57,5 +57,8 @@ jobs:
         with:
           node-version: 'lts/*'
 
+      - name: Install the optional card renderer (so the card tests really render)
+        run: npm install --no-save --no-audit --no-fund @resvg/resvg-js
+
       - name: Run test suite (node --test, no npm install needed)
         run: node --test

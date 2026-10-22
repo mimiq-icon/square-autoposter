@@ -24,6 +24,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import { gitAvailable } from "./news-sync.mjs";
+import { checkSync, formatSync } from "./check-sync.mjs";
 import { telegramConfigured } from "./telegram.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -180,6 +181,11 @@ export async function main(argv = process.argv.slice(2)) {
   else if (ol.status === "missing-model") log(`WARNING: Ollama is running but model "${ol.model}" is not installed. Run: ollama pull ${ol.model}`);
   else log(`WARNING: Ollama not reachable (${ol.error}). Start the Ollama app; until then posts fall back to cloud AI or the plain-headline template.`);
   log(telegramConfigured() ? `Telegram approval: configured` : `Telegram approval: not configured (sensitive stories will wait for a second outlet instead)`);
+  // v11.3: is this PC running the same code as GitHub? (one fetch; a failure never blocks the runner)
+  try {
+    const sync = checkSync({ cwd: HERE });
+    for (const l of formatSync(sync)) log(`code: ${l}`);
+  } catch (e) { log(`code: could not compare with GitHub (${e.message})`); }
 
   if (checkOnly) {
     for (const p of problems) log(`PROBLEM: ${p}`);

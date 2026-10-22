@@ -198,3 +198,19 @@ export async function sendTextChunks({ token, chatId, text, fetchFn = fetch, max
   }
   return parts.length;
 }
+
+// v11.3: show the card you are about to approve. Multipart upload of a PNG
+// Buffer (Node 18+ FormData/Blob). Returns true on success; throws with
+// Telegram's description otherwise (callers treat a failed preview as
+// non-fatal: the text approval still goes out).
+export async function sendPhoto({ token, chatId, png, caption = "", fetchFn = fetch }) {
+  if (!png || !png.length) throw new Error("no image to send");
+  const form = new FormData();
+  form.append("chat_id", String(chatId));
+  form.append("photo", new Blob([png], { type: "image/png" }), "card.png");
+  if (caption) form.append("caption", String(caption).slice(0, 1000));
+  const res = await fetchFn(`https://api.telegram.org/bot${token}/sendPhoto`, { method: "POST", body: form, signal: AbortSignal.timeout(30000) });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || json.ok === false) throw new Error(`Telegram sendPhoto: ${json.description || res.status}`);
+  return true;
+}

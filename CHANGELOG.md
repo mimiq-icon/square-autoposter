@@ -2,6 +2,19 @@
 
 Reconstructed from the version-tagged comments already in `post.mjs` and `scan.mjs` (every change in this codebase has always been commented in place with a `vN` marker) plus this pass's own work. If you're looking for *why* a particular line exists, search the source for its version tag first — the reasoning usually lives right there.
 
+## v11.3 (see what you approve, know what you run, dry-run everything)
+
+- **You now SEE the card before you approve.** Cards used to be built after your tap, so Telegram showed only the text. News, alert (extreme moves) and research posts now send the exact card as a photo, *then* the Post/Skip buttons. The image is uploaded to Square only after you approve, so a skipped draft costs no upload (Binance allows 400 a day). A failed preview is non-fatal.
+- **No "Binance" tag on alert cards** (it was hard-coded as the source). Alert and research cards have no footer text; set `CARD_HANDLE=@yourhandle` to show your handle small at the bottom of alert cards. News cards keep the publisher names (that is attribution).
+- **Bundled font:** `brand/fonts/DejaVuSans*.ttf` (free licence included). Cards render identically on every machine; Windows would otherwise substitute Arial/Segoe and change the look and the text fit.
+- **Price chips no longer cost you the card.** They come from Binance's free ticker first (no key, no quota), CoinGecko second, and if both fail the card is made without chips.
+- **`node check-sync.mjs`** (or double-click `check-sync.bat`): "is this PC's code the same as GitHub's?" Fetches origin/main and compares code (not the bot's own state files); says up-to-date / behind / ahead / diverged / modified and prints the exact fix. `local-runner.mjs --check` and every runner start show the same line.
+- **`node run-mode.mjs <mode>`**: run any part of the bot with your `.env` loaded, DRY by default (`news`, `alerts`, `research`, `daily`, `digest`, `weekly-approve`, ...; `list` shows modes and research topic ids; `--live` really posts). Extra `KEY=VALUE` arguments become environment variables.
+- **`RESEARCH_TOPIC=<id>`** picks one education/research topic, so each can be dry-run. Research dry runs now write a PNG (not just an SVG).
+- **`dry-run-all.ps1` rewritten** (and `dry-run-all.bat` to double-click): it now loads `.env` (the old one ran `node post.mjs` directly, without your keys, so the AI fell back to templates), covers every mode including `weekly-approve` (which sends nothing in dry-run, unlike the old comment claimed), starts with the sync check, ends with an OK/PROBLEM table, logs to `logs/dry-run-all-*.txt`, and `-AllTopics` dry-runs every research topic.
+- **Tests:** 352 (new: `check-sync`, `run-mode`, and end-to-end card-preview tests with the real renderer: preview-before-approval, rejected = no upload, dry-run PNG, chips-failure, research per-topic).
+- `test.yml` now installs the renderer so the card tests really render on GitHub.
+
 ## v11.2 (The Tape: rebrand, extreme-only alert images, audit fixes)
 
 - **Brand:** every card now says THE TAPE with a vector mark (a "T" whose crossbar is a strip of ticker tape). "SQUARE DESK", "MARKET WIRE", "Binance market data" and the "down over the window" captions are gone. `node make-avatar.mjs` writes a matching profile picture to `brand/`.

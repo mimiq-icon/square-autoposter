@@ -93,6 +93,13 @@ Things to know:
 - **No DYOR line on news posts** — they report events rather than comment on price. Add one in `assembleNewsPost()` if you want it.
 - **Commit noise:** each claim is a small commit to `news-state/posted.json` on your main branch (a dozen or two a day).
 
+## Running it on a PC (checks you will use)
+
+- `node check-sync.mjs` (or double-click `check-sync.bat`): is this PC's code identical to GitHub's?
+- `node run-mode.mjs <mode>`: run any part of the bot with your `.env` loaded, dry by default (`node run-mode.mjs list`).
+- `dry-run-all.bat`: dry-run everything and get an OK/PROBLEM table. Details in PC-SETUP.md.
+- Telegram approvals now include the card (news, extreme alerts, research) as a photo before the buttons.
+
 ## Architecture
 
 ```mermaid

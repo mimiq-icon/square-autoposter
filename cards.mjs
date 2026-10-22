@@ -681,6 +681,8 @@ export function buildArticleCoverSvg({
 // anything fails — callers post text-only, never crash.
 import { createRequire } from "module";
 import path from "path";
+import fs from "fs";
+import { fileURLToPath } from "url";
 
 export async function renderSvgToPng(svg, { scale = 2, requireFn = null } = {}) {
   try {
@@ -689,9 +691,14 @@ export async function renderSvgToPng(svg, { scale = 2, requireFn = null } = {}) 
       ? requireFn("@resvg/resvg-js")
       : createRequire(path.join(process.cwd(), "render-card.js"))("@resvg/resvg-js");
     Resvg = mod.default || mod.Resvg || mod;
+    // v11.3: use the bundled DejaVu Sans (brand/fonts) when present, so a card
+    // looks identical on every machine; Windows would otherwise substitute
+    // Arial/Segoe and change the look and the text fit. Falls back to system fonts.
+    const fontDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "brand", "fonts");
+    const fontFiles = ["DejaVuSans.ttf", "DejaVuSans-Bold.ttf"].map((f) => path.join(fontDir, f)).filter((f) => fs.existsSync(f));
     const resvg = new Resvg(svg, {
       fitTo: { mode: "scale", value: scale },
-      font: { loadSystemFonts: true, defaultFontFamily: "DejaVu Sans" },
+      font: fontFiles.length ? { fontFiles, loadSystemFonts: false, defaultFontFamily: "DejaVu Sans" } : { loadSystemFonts: true, defaultFontFamily: "DejaVu Sans" },
       background: BRAND.bg,
     });
     return Buffer.from(resvg.render().asPng());

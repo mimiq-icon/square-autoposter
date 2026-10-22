@@ -104,7 +104,7 @@ import {
   // v11: ETF-flow pacing, richer text posts, rotating disclaimers
   classifyEtfFlow, pickNewsDisclaimer,
 } from "./news.mjs";
-import { telegramConfigured, buildApprovalMessage, requestApproval, storyId, buildAlertApprovalMessage, buildArticleApprovalMessage, sendTextChunks } from "./telegram.mjs";
+import { telegramConfigured, buildApprovalMessage, requestApproval, storyId, buildAlertApprovalMessage, buildArticleApprovalMessage, sendTextChunks, sendPhoto } from "./telegram.mjs";
 import { gitAvailable, pullState, commitPush } from "./news-sync.mjs";
 // v11: the card engine (SVG builders + optional PNG renderer) and the
 // education/research desk live in their own modules so both stay pure and
@@ -2756,7 +2756,32 @@ const CARD_COIN_IDS = {
 
 // 24h price + change for the chips. One call for all detected coins; fails
 // soft (returns []) so a card without data still renders.
+// v11.3: price chips on a news card. Binance's free ticker first (no key, no
+// monthly quota), CoinGecko second, and if both fail the card is still made
+// without chips; losing a chip must never cost you the whole picture.
 async function getCardCoinSnapshot(symbols) {
+  const syms = symbols.filter((s) => CARD_COIN_IDS[s]);
+  if (!syms.length) return [];
+  try {
+    const pairs = syms.map((s) => `${s}USDT`);
+    const res = await fetch(`${BINANCE_TICKER_URL}?symbols=${encodeURIComponent(JSON.stringify(pairs))}`, { signal: AbortSignal.timeout(10_000) });
+    if (!res.ok) throw new Error(`Binance HTTP ${res.status}`);
+    const rows = await res.json();
+    const out = syms.map((s) => {
+      const r = rows.find((x) => x.symbol === `${s}USDT`);
+      return r ? { symbol: s, price: parseFloat(r.lastPrice), change24h: parseFloat(r.priceChangePercent) } : null;
+    }).filter((c) => c && Number.isFinite(c.price));
+    if (out.length) return out;
+  } catch { /* fall through to CoinGecko */ }
+  try {
+    return await getCardCoinSnapshotCoinGecko(syms);
+  } catch (e) {
+    console.log(`  (price chips unavailable: ${e.message}; making the card without them)`);
+    return [];
+  }
+}
+
+async function getCardCoinSnapshotCoinGecko(symbols) {
   const ids = symbols.map((s) => CARD_COIN_IDS[s]).filter(Boolean);
   if (!ids.length) return [];
   const url = `https://api.coingecko.com/api/v3/simple/price?ids=${ids.join(",")}&vs_currencies=usd&include_24hr_change=true`;
@@ -2848,6 +2873,23 @@ async function writeCardPreview(svg, kind) {
     if (png) { fs.writeFileSync(`${base}.png`, png); return `preview written to ${base}.png`; }
   } catch { /* fall through to the SVG-only message */ }
   return `preview written to ${base}.svg (PNG renderer not installed: npm install --no-save @resvg/resvg-js)`;
+}
+
+// v11.3: before asking you to approve a post, show the card that would go with
+// it. Rendering happens here; the upload to Square still waits for your tap.
+// Never fatal: if the renderer is missing or Telegram refuses, the text
+// approval simply goes out without the picture.
+async function previewCardToTelegram(svg, caption = "Card that will be attached") {
+  try {
+    const png = await renderSvgToPng(svg, { scale: CARD_SCALE() });
+    if (!png) { console.log("  (PNG renderer not installed, so the card cannot be previewed in Telegram: npm install --no-save @resvg/resvg-js)"); return false; }
+    await sendPhoto({ token: process.env.TELEGRAM_BOT_TOKEN, chatId: process.env.TELEGRAM_CHAT_ID, png, caption });
+    console.log("  Card preview sent to Telegram.");
+    return true;
+  } catch (e) {
+    console.log(`  Card preview not sent (${e.message}).`);
+    return false;
+  }
 }
 
 // Renders + uploads a card. Returns the uploaded image URL, or null (with a
@@ -3037,11 +3079,25 @@ async function runNewsMode() {
     });
     console.log(`\n--- News post preview (${provider ? `ai: ${provider}` : "template"}) ---\n${text}\n--------------------`);
 
+    // v11.3: build the card BEFORE asking, so Telegram shows the picture you
+    // would be approving (it was built after your tap before). Any failure just
+    // means a text-only post.
+    let card = null;
+    if (NEWS_CARDS_ENABLED()) {
+      try {
+        const coins = await getCardCoinSnapshot(titleCoins);
+        card = buildCardForStory({ cluster: story, coins, disclaimer });
+      } catch (cardErr) {
+        console.log(`  Card skipped (${cardErr.message}) — posting text-only.`);
+      }
+    }
+
     // ---- human approval (only for stories that need it) ----
     if (choice.decision.action === "approve") {
       if (dry) {
         console.log(`  [DRY RUN] Would send this draft to Telegram and wait up to ${cfg.approvalWaitMin} min for a tap.`);
       } else {
+        if (card) await previewCardToTelegram(card.svg, "Card for this post");
         console.log(`  Sent to Telegram for approval (${choice.decision.reason}); waiting up to ${cfg.approvalWaitMin} min...`);
         const verdict = await requestApproval({
           token: process.env.TELEGRAM_BOT_TOKEN,
@@ -3063,20 +3119,16 @@ async function runNewsMode() {
     }
 
     // ---- publish ----
-    // v11: build the card FIRST (needs the exact final text story data), then
-    // publish text + image in one post. Any card failure → text-only post.
+    // The card was built above; upload it only now (a skipped draft costs no
+    // upload). Any card failure → text-only post.
     let imageUrl = null;
-    if (NEWS_CARDS_ENABLED()) {
+    if (card) {
       try {
-        const coins = await getCardCoinSnapshot(titleCoins);
-        const card = buildCardForStory({ cluster: story, coins, disclaimer });
-        if (card) {
-          if (dry) {
-            console.log(`  Card: ${card.kind} — ${await writeCardPreview(card.svg, card.kind)}; upload skipped in dry run.`);
-          } else {
-            imageUrl = await cardToSquareImage(card.svg, process.env.BINANCE_SQUARE_OPENAPI_KEY);
-            console.log(`  Card: ${card.kind} rendered and uploaded: ${imageUrl ? "yes" : "no"}`);
-          }
+        if (dry) {
+          console.log(`  Card: ${card.kind} — ${await writeCardPreview(card.svg, card.kind)}; upload skipped in dry run.`);
+        } else {
+          imageUrl = await cardToSquareImage(card.svg, process.env.BINANCE_SQUARE_OPENAPI_KEY);
+          console.log(`  Card: ${card.kind} rendered and uploaded: ${imageUrl ? "yes" : "no"}`);
         }
       } catch (cardErr) {
         console.log(`  Card skipped (${cardErr.message}) — posting text-only.`);
@@ -3235,9 +3287,21 @@ async function runResearchMode() {
 
   // Which format? auto → article on the first Saturday, short otherwise.
   // Other Saturdays are reserved: they neither post a short nor an article.
-  const kind = runMode === "article" || (runMode === "auto" && isFirstSaturday(nowMs)) ? "research-article" : "education";
-  const topicKind = kind === "research-article" ? "research" : kind;
-  if (runMode === "auto" && now.getUTCDay() === 6 && !isFirstSaturday(nowMs)) {
+  let kind = runMode === "article" || (runMode === "auto" && isFirstSaturday(nowMs)) ? "research-article" : "education";
+  let topicKind = kind === "research-article" ? "research" : kind;
+  // v11.3: RESEARCH_TOPIC=<id> picks one topic (to dry-run each of them); its own kind decides the format.
+  const forcedTopicId = String(process.env.RESEARCH_TOPIC || "").trim();
+  if (forcedTopicId) {
+    const forced = RESEARCH_TOPICS.find((t) => t.id === forcedTopicId);
+    if (!forced) {
+      console.log(`  Unknown RESEARCH_TOPIC "${forcedTopicId}". Valid ids: ${RESEARCH_TOPICS.map((t) => t.id).join(", ")}`);
+      writeResearchSummary({ outcome: "unknown RESEARCH_TOPIC", dryRun: dry });
+      return;
+    }
+    topicKind = forced.kind;
+    kind = forced.kind === "research" ? "research-article" : "education";
+  }
+  if (!forcedTopicId && runMode === "auto" && now.getUTCDay() === 6 && !isFirstSaturday(nowMs)) {
     console.log(`  Saturday is reserved for the monthly article, and this isn't the first Saturday. Nothing to do.`);
     writeResearchSummary({ outcome: "not the first Saturday", dryRun: dry });
     return;
@@ -3254,7 +3318,7 @@ async function runResearchMode() {
   }
 
   // ---- 1. pick a topic from what hasn't been used recently ----
-  const topic = pickResearchTopic({ kind: topicKind, recentIds: state.recent, dayIndex });
+  const topic = forcedTopicId ? RESEARCH_TOPICS.find((t) => t.id === forcedTopicId) : pickResearchTopic({ kind: topicKind, recentIds: state.recent, dayIndex });
   if (!topic) {
     console.log(`  No ${topicKind} topic available — every topic in the rotation was used recently.`);
     writeResearchSummary({ outcome: "no topic available", dryRun: dry });
@@ -3303,6 +3367,7 @@ async function runResearchMode() {
 
   // Visuals: explainer slide for short posts, cover for articles.
   let imageUrl = null;
+  let researchSvg = null;
   try {
     const svg = kind === "research-article"
       ? buildArticleCoverSvg({ kicker: topic.kicker, title: topic.title, footer: `The Tape · ${factHealth.join(", ")}` })
@@ -3312,10 +3377,9 @@ async function runResearchMode() {
           bullets: [copy.body, copy.takeaway],
           footer: `The Tape · ${factHealth.join(", ")}`,
         });
+    researchSvg = svg;
     if (dry) {
-      const preview = path.join("logs", `research-preview-${Date.now()}.svg`);
-      try { fs.mkdirSync(path.dirname(preview), { recursive: true }); fs.writeFileSync(preview, svg); } catch { /* best effort */ }
-      console.log(`  Visual: ${kind === "research-article" ? "article cover" : "explainer slide"} (SVG ${svg.length} chars) — preview written to ${preview}.`);
+      console.log(`  Visual: ${kind === "research-article" ? "article cover" : "explainer slide"} — ${await writeCardPreview(svg, "research")}.`);
     } else {
       imageUrl = await cardToSquareImage(svg, process.env.BINANCE_SQUARE_OPENAPI_KEY);
       console.log(`  Visual rendered and uploaded: ${imageUrl ? "yes" : "no"}`);
@@ -3334,6 +3398,7 @@ async function runResearchMode() {
       const key = process.env.BINANCE_SQUARE_OPENAPI_KEY;
       if (!key) throw new Error("Missing BINANCE_SQUARE_OPENAPI_KEY environment variable.");
       const waitMin = Math.max(1, Number(process.env.RESEARCH_APPROVAL_WAIT_MIN) || 120);
+      if (researchSvg) await previewCardToTelegram(researchSvg, kind === "research-article" ? "Cover for this article" : "Slide for this post");
       console.log(`  Sent to Telegram for approval; waiting up to ${waitMin} min...`);
       const verdict = await requestApproval({
         token: process.env.TELEGRAM_BOT_TOKEN,
@@ -3625,34 +3690,13 @@ async function runAlertsMode() {
     const text = assembleAlertPost({ alert, headline: copy.headline, context: copy.context, disclaimer, hashtags: pickHashtags(`$${alert.symbol}`) });
     console.log(`\n--- Alert preview (${provider ? `ai: ${provider}` : "template"}) ---\n${text}\n--------------------`);
 
-    // ---- optional human approval ----
-    if (wantApproval) {
-      if (dry) {
-        console.log(`  [DRY RUN] Would send this to Telegram and wait up to ${cfg.approvalWaitMin} min for a tap.`);
-      } else {
-        console.log(`  Sent to Telegram for approval; waiting up to ${cfg.approvalWaitMin} min...`);
-        const verdict = await requestApproval({
-          token: process.env.TELEGRAM_BOT_TOKEN, chatId: process.env.TELEGRAM_CHAT_ID,
-          message: buildAlertApprovalMessage({ text, alert, provider }),
-          id: alert.id.slice(0, 50), waitMs: cfg.approvalWaitMin * 60_000, log: (m) => console.log(`  ${m}`),
-        });
-        console.log(`  Approval result: ${verdict}.`);
-        if (verdict !== "approved") {
-          sync.update((s) => setAlertStatus(s, alert, "skipped"), `alerts: ${verdict}`);
-          writeAlertSummary({ outcome: `not posted (${verdict})`, alert, text, provider, dryRun: dry });
-          return;
-        }
-      }
-    }
-
-    // ---- image: v11.2 — most alerts are TEXT ONLY. A picture is for violent
-    // moves (see extremeMove in alerts.mjs). ALERT_CHART=extreme (default) |
-    // all | off. Extreme moves get the loud glowing card; "all" gives every
-    // alert the standard card. A card failure never blocks the post. ----
-    let imageUrl = null;
+    // ---- image decision + card (v11.3: built BEFORE asking, so Telegram shows it) ----
+    // v11.2: most alerts are TEXT ONLY. A picture is for violent moves (see
+    // extremeMove in alerts.mjs). ALERT_CHART=extreme (default) | all | off.
     const imageMode = envOff("ALERT_CHART") ? "off" : /^all$/i.test(String(process.env.ALERT_CHART ?? "").trim()) ? "all" : "extreme";
     const ext = extremeMove(alert, { movePct: envNumber("ALERT_CARD_MOVE_PCT", 8), flashPct: envNumber("ALERT_CARD_FLASH_PCT", 3) });
     const wantImage = imageMode === "all" || (imageMode === "extreme" && ext.extreme);
+    let alertCard = null; // { svg, win, closes }
     if (!wantImage) {
       console.log(`  Image: none (${imageMode === "off" ? "ALERT_CHART=off" : "not an extreme move"}) — posting text-only.`);
     } else {
@@ -3672,27 +3716,60 @@ async function runAlertsMode() {
           ? buildExtremeAlertCardSvg({
               symbol: `$${alert.symbol}`, price: alert.price, heroPct: ext.pct, heroLabel: ext.label,
               change24h: Number.isFinite(alert.change24h) ? alert.change24h : null,
-              headline: copy.headline, source: "Binance", sparkline, level,
+              headline: copy.headline, source: process.env.CARD_HANDLE || "", sparkline, level,
             })
           : buildAlertCardSvg({
               symbol: `$${alert.symbol}`, price: alert.price,
               change24h: Number.isFinite(alert.change24h) ? alert.change24h : null,
               low: Number.isFinite(alert.low24h) ? alert.low24h : null,
               high: Number.isFinite(alert.high24h) ? alert.high24h : null,
-              windowLabel: `${win.hours}h range`, headline: copy.headline, source: "Binance",
+              windowLabel: `${win.hours}h range`, headline: copy.headline, source: process.env.CARD_HANDLE || "",
               sparkline, sparklineLabel: `${win.hours}h`, level,
             });
+        alertCard = { svg, win, closes };
+      } catch (cardErr) {
+        console.log(`  Alert card skipped (${cardErr.message}).`);
+        if (closes && closes.length >= 2) alertCard = { svg: null, win, closes }; // plain-chart fallback below
+      }
+    }
+
+    // ---- optional human approval ----
+    if (wantApproval) {
+      if (dry) {
+        console.log(`  [DRY RUN] Would send this to Telegram and wait up to ${cfg.approvalWaitMin} min for a tap.`);
+      } else {
+        if (alertCard?.svg) await previewCardToTelegram(alertCard.svg, "Card for this alert");
+        console.log(`  Sent to Telegram for approval; waiting up to ${cfg.approvalWaitMin} min...`);
+        const verdict = await requestApproval({
+          token: process.env.TELEGRAM_BOT_TOKEN, chatId: process.env.TELEGRAM_CHAT_ID,
+          message: buildAlertApprovalMessage({ text, alert, provider }),
+          id: alert.id.slice(0, 50), waitMs: cfg.approvalWaitMin * 60_000, log: (m) => console.log(`  ${m}`),
+        });
+        console.log(`  Approval result: ${verdict}.`);
+        if (verdict !== "approved") {
+          sync.update((s) => setAlertStatus(s, alert, "skipped"), `alerts: ${verdict}`);
+          writeAlertSummary({ outcome: `not posted (${verdict})`, alert, text, provider, dryRun: dry });
+          return;
+        }
+      }
+    }
+
+    // ---- upload the card only now (a skipped draft costs no upload) ----
+    let imageUrl = null;
+    if (alertCard) {
+      try {
+        if (!alertCard.svg) throw new Error("card could not be built");
         if (dry) {
-          console.log(`  Image: ${ext.extreme ? "EXTREME" : "standard"} alert card — ${await writeCardPreview(svg, "alert")}; upload skipped in dry run.`);
+          console.log(`  Image: ${ext.extreme ? "EXTREME" : "standard"} alert card — ${await writeCardPreview(alertCard.svg, "alert")}; upload skipped in dry run.`);
         } else {
-          imageUrl = await cardToSquareImage(svg, process.env.BINANCE_SQUARE_OPENAPI_KEY);
+          imageUrl = await cardToSquareImage(alertCard.svg, process.env.BINANCE_SQUARE_OPENAPI_KEY);
           if (imageUrl) console.log(`  Alert card rendered and uploaded (${ext.extreme ? "extreme" : "standard"}).`);
         }
       } catch (cardErr) {
         console.log(`  Alert card skipped (${cardErr.message}) — trying the plain price chart.`);
         try {
-          if (!dry && closes && closes.length >= 2) {
-            const chartConfig = buildPriceChartConfig({ symbol: alert.symbol, closes, level: alert.kind === "level" ? alert.level : null, hours: win.hours });
+          if (!dry && alertCard.closes && alertCard.closes.length >= 2) {
+            const chartConfig = buildPriceChartConfig({ symbol: alert.symbol, closes: alertCard.closes, level: alert.kind === "level" ? alert.level : null, hours: alertCard.win.hours });
             imageUrl = chartConfig ? await renderAndUploadChart(chartConfig) : null;
           }
         } catch (chartErr) {

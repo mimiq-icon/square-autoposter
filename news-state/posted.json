@@ -1,27 +1,6 @@
 {
   "posted": [
     {
-      "title": "SEC tokenized stock framework faces issuer pushback as Broadcom, Verizon object to OKX-ICE listing",
-      "link": "https://www.coindesk.com/business/2026/10/18/sec-tokenized-stock-framework-faces-issuer-pushback-as-broadcom-verizon-object-to-okx-ice-listing",
-      "source": "CoinDesk",
-      "at": 1792372275804,
-      "status": "posted"
-    },
-    {
-      "title": "Bitcoin, Ether ETFs shed $549M as October ETH outflows near $1B",
-      "link": "https://cointelegraph.com/markets/bitcoin-ether-etfs-549-million-weekly-outflows?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
-      "source": "Cointelegraph",
-      "at": 1792398511794,
-      "status": "posted"
-    },
-    {
-      "title": "JPMorgan expands ‘JPM Coin’ deposit token to Ethereum for institutional clients",
-      "link": "https://www.theblock.co/news/business/2026-10-19-jpmorgan-jpm-coin-deposit-token-ethereum-418874",
-      "source": "The Block",
-      "at": 1792398848605,
-      "status": "posted"
-    },
-    {
       "title": "Bitmine adds 12,535 ETH as treasury reaches 6.04 million tokens",
       "link": "https://www.theblock.co/news/business/2026-10-19-bitmine-adds-12535-eth-as-treasury-reaches-6-04-million-tokens-421018",
       "source": "The Block",
@@ -119,6 +98,14 @@
       "source": "CryptoSlate",
       "at": 1792624524838,
       "status": "posted"
+    },
+    {
+      "title": "Bitcoin’s $80,000 floor faces Friday inflation test as ETF inflows lose momentum",
+      "link": "https://cryptoslate.com/bitcoins-80000-floor-faces-friday-inflation-test-as-etf-inflows-lose-momentum/",
+      "source": "CryptoSlate",
+      "at": 1792663635489,
+      "status": "posted",
+      "etfFlow": "BTC"
     }
   ]
 }

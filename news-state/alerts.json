@@ -69,6 +69,16 @@
       "price": 1.2973,
       "at": 1792794829927,
       "status": "pending"
+    },
+    {
+      "id": "BNB:level:down:740",
+      "symbol": "BNB",
+      "kind": "level",
+      "dir": "down",
+      "level": 740,
+      "price": 739.55,
+      "at": 1792795286919,
+      "status": "pending"
     }
   ]
 }

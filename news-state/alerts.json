@@ -59,6 +59,16 @@
       "price": 11.899,
       "at": 1792792275286,
       "status": "posted"
+    },
+    {
+      "id": "XRP:level:down:1.3",
+      "symbol": "XRP",
+      "kind": "level",
+      "dir": "down",
+      "level": 1.3,
+      "price": 1.2973,
+      "at": 1792794829927,
+      "status": "pending"
     }
   ]
 }

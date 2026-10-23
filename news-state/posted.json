@@ -1,13 +1,6 @@
 {
   "posted": [
     {
-      "title": "Bitcoin ETF comeback exposes a $630 million divide with Ethereum as BlackRock dominates",
-      "link": "https://cryptoslate.com/bitcoin-etf-comeback-exposes-a-630-million-divide-with-ethereum-as-blackrock-dominates/",
-      "source": "CryptoSlate",
-      "at": 1792495773938,
-      "status": "posted"
-    },
-    {
       "title": "FINMA approves Switzerland’s first Bitcoin ETF for retail investors",
       "link": "https://cointelegraph.com/news/finma-approves-switzerlands-first-bitcoin-etf-retail?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
       "source": "Cointelegraph",
@@ -127,6 +120,14 @@
       "source": "Cointelegraph",
       "at": 1792749613108,
       "status": "posted"
+    },
+    {
+      "title": "Bitcoin ETFs swing back to net outflows as $636 million in withdrawals erase previous day’s inflows",
+      "link": "https://www.theblock.co/news/markets/2026-10-23-bitcoin-etfs-swing-back-to-net-outflows-erase-previous-day-inflows-426483",
+      "source": "The Block",
+      "at": 1792758729953,
+      "status": "pending",
+      "etfFlow": "BTC"
     }
   ]
 }

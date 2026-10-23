@@ -1,13 +1,6 @@
 {
   "posted": [
     {
-      "title": "Bitcoin Treasury Strive Debuts New Preferred Stock With 15% Dividend",
-      "link": "https://bitcoinmagazine.com/news/strive-debuts-new-preferred-stock",
-      "source": "Bitcoin Magazine",
-      "at": 1792528419126,
-      "status": "posted"
-    },
-    {
       "title": "BNB Chain burns $1.2B in October tokens, leaving real supply impact hidden",
       "link": "https://cryptoslate.com/bnb-chain-burns-1-2b-in-october-tokens-leaving-real-supply-impact-hidden/",
       "source": "CryptoSlate",
@@ -155,6 +148,13 @@
       "link": "https://www.theblock.co/news/regulation/2026-10-23-sen-blumenthal-seeks-answers-tether-payments-firm-founded-ex-white-house-crypto-adviser-427785",
       "source": "The Block",
       "at": 1792787105162,
+      "status": "pending"
+    },
+    {
+      "title": "NY Seeks $1.37 Billion Judgment Against Operators of NovaTech Crypto Ponzi Scheme",
+      "link": "https://bitcoinmagazine.com/news/ny-seeks-1-37-b-judgement-novatech",
+      "source": "Bitcoin Magazine",
+      "at": 1792791153805,
       "status": "pending"
     }
   ]

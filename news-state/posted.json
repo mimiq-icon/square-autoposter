@@ -1,13 +1,6 @@
 {
   "posted": [
     {
-      "title": "US Bitcoin ETFs draw $527M in biggest showing since September",
-      "link": "https://cointelegraph.com/markets/bitcoin-etfs-527m-inflows-biggest-since-september?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
-      "source": "Cointelegraph",
-      "at": 1792475968209,
-      "status": "posted"
-    },
-    {
       "title": "Bitcoin ETF comeback exposes a $630 million divide with Ethereum as BlackRock dominates",
       "link": "https://cryptoslate.com/bitcoin-etf-comeback-exposes-a-630-million-divide-with-ethereum-as-blackrock-dominates/",
       "source": "CryptoSlate",
@@ -126,6 +119,13 @@
       "link": "https://www.coindesk.com/markets/2026/10/23/cardano-holders-are-being-asked-to-bet-usd5-million-on-copper-hitting-a-new-record",
       "source": "CoinDesk",
       "at": 1792730515201,
+      "status": "posted"
+    },
+    {
+      "title": "Bitcoin ETFs bleed $635M as October slides back into the red",
+      "link": "https://cointelegraph.com/markets/bitcoin-etfs-erase-october-gains-outflow?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
+      "source": "Cointelegraph",
+      "at": 1792749613108,
       "status": "posted"
     }
   ]

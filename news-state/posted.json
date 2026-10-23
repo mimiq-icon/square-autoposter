@@ -126,7 +126,7 @@
       "link": "https://www.theblock.co/news/markets/2026-10-23-bitcoin-etfs-swing-back-to-net-outflows-erase-previous-day-inflows-426483",
       "source": "The Block",
       "at": 1792758729953,
-      "status": "pending",
+      "status": "skipped",
       "etfFlow": "BTC"
     }
   ]

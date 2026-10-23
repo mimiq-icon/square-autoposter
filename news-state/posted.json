@@ -1,13 +1,6 @@
 {
   "posted": [
     {
-      "title": "FINMA approves Switzerland’s first Bitcoin ETF for retail investors",
-      "link": "https://cointelegraph.com/news/finma-approves-switzerlands-first-bitcoin-etf-retail?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
-      "source": "Cointelegraph",
-      "at": 1792515457334,
-      "status": "posted"
-    },
-    {
       "title": "Bitcoin Treasury Strive Debuts New Preferred Stock With 15% Dividend",
       "link": "https://bitcoinmagazine.com/news/strive-debuts-new-preferred-stock",
       "source": "Bitcoin Magazine",
@@ -134,6 +127,13 @@
       "link": "https://cryptoslate.com/bitcoins-80000-recovery-faces-liquidity-questions-as-binances-tether-flows-swing-14-billion/",
       "source": "CryptoSlate",
       "at": 1792767677534,
+      "status": "posted"
+    },
+    {
+      "title": "Bitcoin ETFs shed $635 million as BTC tests their holdings’ estimated $81,500 cost basis",
+      "link": "https://cryptoslate.com/bitcoin-etf-outflows-holdings-cost-basis/",
+      "source": "CryptoSlate",
+      "at": 1792782585335,
       "status": "posted"
     }
   ]

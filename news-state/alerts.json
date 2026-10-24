@@ -99,6 +99,16 @@
       "price": 11.797,
       "at": 1792825911246,
       "status": "pending"
+    },
+    {
+      "id": "ADA:level:down:0.21",
+      "symbol": "ADA",
+      "kind": "level",
+      "dir": "down",
+      "level": 0.21,
+      "price": 0.2092,
+      "at": 1792827317934,
+      "status": "pending"
     }
   ]
 }

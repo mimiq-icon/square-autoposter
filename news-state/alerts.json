@@ -169,6 +169,16 @@
       "price": 1.2791,
       "at": 1792832694971,
       "status": "pending"
+    },
+    {
+      "id": "LINK:level:down:11.6",
+      "symbol": "LINK",
+      "kind": "level",
+      "dir": "down",
+      "level": 11.6,
+      "price": 11.599,
+      "at": 1792833472841,
+      "status": "pending"
     }
   ]
 }

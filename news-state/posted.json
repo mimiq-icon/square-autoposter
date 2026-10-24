@@ -1,35 +1,6 @@
 {
   "posted": [
     {
-      "title": "BNB Chain burns $1.2B in October tokens, leaving real supply impact hidden",
-      "link": "https://cryptoslate.com/bnb-chain-burns-1-2b-in-october-tokens-leaving-real-supply-impact-hidden/",
-      "source": "CryptoSlate",
-      "at": 1792540242569,
-      "status": "posted"
-    },
-    {
-      "title": "Ether ETF outflows continue, pass $1B in October so far",
-      "link": "https://cointelegraph.com/markets/ether-etf-outflows-near-1-1-billion-october?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
-      "source": "Cointelegraph",
-      "at": 1792570613688,
-      "status": "skipped",
-      "etfFlow": "ETH"
-    },
-    {
-      "title": "Tether leads $15 million funding round for AI-focused payment startup Mural",
-      "link": "https://www.coindesk.com/business/2026/10/21/tether-leads-usd15-million-series-a-for-ai-focused-payment-startup-mural",
-      "source": "CoinDesk",
-      "at": 1792572637232,
-      "status": "posted"
-    },
-    {
-      "title": "Switzerland approves landmark Bitcoin ETF after ruling trading volume sufficient",
-      "link": "https://cryptoslate.com/switzerland-approves-landmark-bitcoin-etf-after-ruling-trading-volume-sufficient/",
-      "source": "CryptoSlate",
-      "at": 1792577093171,
-      "status": "posted"
-    },
-    {
       "title": "Bybit will look for big broker partnerships to take on Robinhood in the U.S.",
       "link": "https://www.coindesk.com/business/2026/10/16/bybit-will-look-for-big-broker-partnerships-to-take-on-robinhood-in-the-u-s",
       "source": "CoinDesk",
@@ -155,6 +126,13 @@
       "link": "https://bitcoinmagazine.com/news/ny-seeks-1-37-b-judgement-novatech",
       "source": "Bitcoin Magazine",
       "at": 1792791153805,
+      "status": "posted"
+    },
+    {
+      "title": "Ethereum sees biggest exchange withdrawal in four months as October ETF losses top $1 billion",
+      "link": "https://cryptoslate.com/ethereum-sees-biggest-exchange-withdrawal-in-four-months-as-october-etf-losses-top-1-billion/",
+      "source": "CryptoSlate",
+      "at": 1792852135417,
       "status": "posted"
     }
   ]

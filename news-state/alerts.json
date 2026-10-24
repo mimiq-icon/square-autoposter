@@ -119,6 +119,16 @@
       "price": 101.96,
       "at": 1792828586374,
       "status": "pending"
+    },
+    {
+      "id": "ETH:level:down:2375",
+      "symbol": "ETH",
+      "kind": "level",
+      "dir": "down",
+      "level": 2375,
+      "price": 2373.47,
+      "at": 1792829064600,
+      "status": "pending"
     }
   ]
 }

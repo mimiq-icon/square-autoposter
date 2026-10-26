@@ -1,34 +1,6 @@
 {
   "posted": [
     {
-      "title": "Bitcoin ETFs Bleed $636 Million as October Turns Red Again",
-      "link": "https://decrypt.co/381700/bitcoin-etfs-bleed-october-turns-red-again",
-      "source": "Decrypt",
-      "at": 1792784734971,
-      "status": "posted"
-    },
-    {
-      "title": "Bitcoin ETFs Lose Over $635M In One Day Following Oil Price Spike",
-      "link": "https://bitcoinmagazine.com/news/bitcoin-etfs-lose-over-635-million",
-      "source": "Bitcoin Magazine",
-      "at": 1792785521014,
-      "status": "posted"
-    },
-    {
-      "title": "Sen. Blumenthal seeks answers from Tether over payments to firm founded by ex-White House crypto adviser",
-      "link": "https://www.theblock.co/news/regulation/2026-10-23-sen-blumenthal-seeks-answers-tether-payments-firm-founded-ex-white-house-crypto-adviser-427785",
-      "source": "The Block",
-      "at": 1792787105162,
-      "status": "pending"
-    },
-    {
-      "title": "NY Seeks $1.37 Billion Judgment Against Operators of NovaTech Crypto Ponzi Scheme",
-      "link": "https://bitcoinmagazine.com/news/ny-seeks-1-37-b-judgement-novatech",
-      "source": "Bitcoin Magazine",
-      "at": 1792791153805,
-      "status": "posted"
-    },
-    {
       "title": "Ethereum sees biggest exchange withdrawal in four months as October ETF losses top $1 billion",
       "link": "https://cryptoslate.com/ethereum-sees-biggest-exchange-withdrawal-in-four-months-as-october-etf-losses-top-1-billion/",
       "source": "CryptoSlate",
@@ -61,6 +33,13 @@
       "link": "https://cryptoslate.com/strategy-makes-record-205-million-strc-buyback-as-strive-spends-511-million-on-bitcoin/",
       "source": "CryptoSlate",
       "at": 1793042069530,
+      "status": "posted"
+    },
+    {
+      "title": "Ripple connects XRP Ledger to a £22 billion investment giant while chasing the next wave of corporate money",
+      "link": "https://cryptoslate.com/ripple-connects-xrp-ledger-to-a-22-billion-investment-giant-while-chasing-the-next-wave-of-corporate-money/",
+      "source": "CryptoSlate",
+      "at": 1793058608464,
       "status": "posted"
     }
   ]

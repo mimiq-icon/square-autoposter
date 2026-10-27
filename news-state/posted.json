@@ -1,13 +1,6 @@
 {
   "posted": [
     {
-      "title": "Ethereum sees biggest exchange withdrawal in four months as October ETF losses top $1 billion",
-      "link": "https://cryptoslate.com/ethereum-sees-biggest-exchange-withdrawal-in-four-months-as-october-etf-losses-top-1-billion/",
-      "source": "CryptoSlate",
-      "at": 1792852135417,
-      "status": "posted"
-    },
-    {
       "title": "Circle shareholder sues Trump over UAE crypto deals, citing up to $82 million in potential annual revenue",
       "link": "https://cryptoslate.com/circle-shareholder-sues-trump-over-uae-crypto-deals-citing-up-to-82-million-in-potential-annual-revenue/",
       "source": "CryptoSlate",
@@ -54,6 +47,13 @@
       "link": "https://decrypt.co/381899/ripple-wins-final-occ-approval-for-trust-bank-behind-2-6b-rlusd-stablecoin",
       "source": "Decrypt",
       "at": 1793097003179,
+      "status": "posted"
+    },
+    {
+      "title": "Ark Invest buys $5.2 million of Circle shares, sells $15.9 million of its own Bitcoin ETF as BTC grinds lower",
+      "link": "https://www.theblock.co/news/markets/2026-10-27-ark-invest-buys-5-2-million-of-circle-shares-sells-15-9-million-of-its-own-bitcoin-etf-as-btc-grinds-lower-431838",
+      "source": "The Block",
+      "at": 1793118898742,
       "status": "posted"
     }
   ]

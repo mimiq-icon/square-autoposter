@@ -62,6 +62,14 @@
       "source": "Decrypt",
       "at": 1793150263438,
       "status": "posted"
+    },
+    {
+      "title": "Bitcoin ETF inflows climb to $176M as sentiment edges higher",
+      "link": "https://cointelegraph.com/markets/bitcoin-etf-176-million-inflow-sentiment-rebounds?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
+      "source": "Cointelegraph",
+      "at": 1793175809096,
+      "status": "posted",
+      "etfFlow": "BTC"
     }
   ]
 }

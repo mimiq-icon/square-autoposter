@@ -1,13 +1,6 @@
 {
   "posted": [
     {
-      "title": "Hong Kong names Nasdaq-listed Solana Company a strategic enterprise",
-      "link": "https://cointelegraph.com/news/hong-kong-names-nasdaq-listed-solana-company-a-strategic-enterprise?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
-      "source": "Cointelegraph",
-      "at": 1792994827056,
-      "status": "posted"
-    },
-    {
       "title": "Aviva Investors launches tokenized share class of $29B Sterling fund on XRP Ledger",
       "link": "https://cointelegraph.com/news/aviva-investors-launches-tokenized-share-class-of-sterling-fund-on-xrp-ledger?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
       "source": "Cointelegraph",
@@ -83,6 +76,13 @@
       "link": "https://cryptoslate.com/robinhood-posts-record-1-4-billion-revenue-but-a-14-profit-drop-exposes-hidden-portfolio-losses/",
       "source": "CryptoSlate",
       "at": 1793221302388,
+      "status": "posted"
+    },
+    {
+      "title": "Ripple’s RLUSD stablecoin gains Coinbase access as Moody’s awards investment-grade rating",
+      "link": "https://cryptoslate.com/ripples-rlusd-stablecoin-gains-coinbase-access-as-moodys-awards-investment-grade-rating/",
+      "source": "CryptoSlate",
+      "at": 1793257228748,
       "status": "posted"
     }
   ]

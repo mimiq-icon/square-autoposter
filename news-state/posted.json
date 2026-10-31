@@ -1,35 +1,6 @@
 {
   "posted": [
     {
-      "title": "Robinhood taps Ripple’s $2.5 billion RLUSD stablecoin despite backing rival USDG",
-      "link": "https://www.coindesk.com/business/2026/10/27/ripple-s-rlusd-stablecoin-is-coming-to-robinhood-s-28-6-million-customer-platform",
-      "source": "CoinDesk",
-      "at": 1793135838097,
-      "status": "posted"
-    },
-    {
-      "title": "Robinhood Taps Ripple's Stablecoin, Treasury Software and Trading Loans",
-      "link": "https://decrypt.co/382002/robinhood-taps-ripple-stablecoin-treasury-software-trading-loans",
-      "source": "Decrypt",
-      "at": 1793150263438,
-      "status": "posted"
-    },
-    {
-      "title": "Bitcoin ETF inflows climb to $176M as sentiment edges higher",
-      "link": "https://cointelegraph.com/markets/bitcoin-etf-176-million-inflow-sentiment-rebounds?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
-      "source": "Cointelegraph",
-      "at": 1793175809096,
-      "status": "posted",
-      "etfFlow": "BTC"
-    },
-    {
-      "title": "Coinbase adds Ripple’s RLUSD stablecoin across retail, exchange and Prime platforms",
-      "link": "https://www.theblock.co/news/business/2026-10-28-coinbase-adds-ripple-rlusd-stablecoin-432009",
-      "source": "The Block",
-      "at": 1793203143611,
-      "status": "posted"
-    },
-    {
       "title": "Robinhood posts record $1.4 billion revenue, but a 14% profit drop exposes hidden portfolio losses",
       "link": "https://cryptoslate.com/robinhood-posts-record-1-4-billion-revenue-but-a-14-profit-drop-exposes-hidden-portfolio-losses/",
       "source": "CryptoSlate",
@@ -84,6 +55,14 @@
       "source": "Cointelegraph",
       "at": 1793387872125,
       "status": "posted"
+    },
+    {
+      "title": "Bitcoin ETFs lose $643 million in a day, wiping out the week’s inflows",
+      "link": "https://cryptoslate.com/bitcoin-etfs-643-million-outflows-weekly-reversal/",
+      "source": "CryptoSlate",
+      "at": 1793468519549,
+      "status": "posted",
+      "etfFlow": "BTC"
     }
   ]
 }

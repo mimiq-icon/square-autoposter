@@ -1,27 +1,6 @@
 {
   "posted": [
     {
-      "title": "Robinhood posts record $1.4 billion revenue, but a 14% profit drop exposes hidden portfolio losses",
-      "link": "https://cryptoslate.com/robinhood-posts-record-1-4-billion-revenue-but-a-14-profit-drop-exposes-hidden-portfolio-losses/",
-      "source": "CryptoSlate",
-      "at": 1793221302388,
-      "status": "posted"
-    },
-    {
-      "title": "Ripple’s RLUSD stablecoin gains Coinbase access as Moody’s awards investment-grade rating",
-      "link": "https://cryptoslate.com/ripples-rlusd-stablecoin-gains-coinbase-access-as-moodys-awards-investment-grade-rating/",
-      "source": "CryptoSlate",
-      "at": 1793257228748,
-      "status": "posted"
-    },
-    {
-      "title": "Unlimit founder backs Phase blockchain with $45M as mainnet launches",
-      "link": "https://cointelegraph.com/news/unlimit-founder-phase-blockchain-mainnet-launches?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
-      "source": "Cointelegraph",
-      "at": 1793283184919,
-      "status": "posted"
-    },
-    {
       "title": "Crypto investors refuse to sell XRP ETF tokens despite a 25% price crash",
       "link": "https://cryptoslate.com/crypto-investors-refuse-to-sell-xrp-etf-tokens-despite-a-25-price-crash/",
       "source": "CryptoSlate",
@@ -63,6 +42,13 @@
       "at": 1793468519549,
       "status": "posted",
       "etfFlow": "BTC"
+    },
+    {
+      "title": "Binance says phase one of withdrawals opens after $6.3B hack",
+      "link": "https://cointelegraph.com/news/binance-says-phase-one-of-withdrawals-opens-after-63b-hack?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
+      "source": "Cointelegraph",
+      "at": 1793545417164,
+      "status": "posted"
     }
   ]
 }

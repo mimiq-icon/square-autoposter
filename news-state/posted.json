@@ -1,13 +1,6 @@
 {
   "posted": [
     {
-      "title": "Tether’s excess reserves nearly double to $8B as Q3 profit hits $1.5B",
-      "link": "https://cointelegraph.com/news/tethers-excess-reserves-nearly-double-to-8b-as-q3-profit-hits-15b?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
-      "source": "Cointelegraph",
-      "at": 1793387872125,
-      "status": "posted"
-    },
-    {
       "title": "Bitcoin ETFs lose $643 million in a day, wiping out the week’s inflows",
       "link": "https://cryptoslate.com/bitcoin-etfs-643-million-outflows-weekly-reversal/",
       "source": "CryptoSlate",
@@ -34,6 +27,13 @@
       "link": "https://www.coindesk.com/markets/2026/11/02/bitcoin-eases-to-usd77-900-as-binance-customers-pull-usd3-6-billion-after-withdrawals-reopen",
       "source": "CoinDesk",
       "at": 1793634053328,
+      "status": "posted"
+    },
+    {
+      "title": "Treasury holds $1 trillion as Bitcoin faces a key liquidity test this week",
+      "link": "https://cryptoslate.com/treasury-holds-1-trillion-as-bitcoin-faces-a-key-liquidity-test-this-week/",
+      "source": "CryptoSlate",
+      "at": 1793662107318,
       "status": "posted"
     }
   ]

@@ -1,14 +1,6 @@
 {
   "posted": [
     {
-      "title": "Bitcoin ETFs lose $643 million in a day, wiping out the week’s inflows",
-      "link": "https://cryptoslate.com/bitcoin-etfs-643-million-outflows-weekly-reversal/",
-      "source": "CryptoSlate",
-      "at": 1793468519549,
-      "status": "posted",
-      "etfFlow": "BTC"
-    },
-    {
       "title": "Binance says phase one of withdrawals opens after $6.3B hack",
       "link": "https://cointelegraph.com/news/binance-says-phase-one-of-withdrawals-opens-after-63b-hack?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
       "source": "Cointelegraph",
@@ -48,6 +40,13 @@
       "link": "https://decrypt.co/382397/liquid-network-restores-full-bitcoin-backing-two-months-after-320m-exploit",
       "source": "Decrypt",
       "at": 1793718238010,
+      "status": "posted"
+    },
+    {
+      "title": "Binance traces $6.3B hack to fake job interviews, compromised AI tool",
+      "link": "https://cointelegraph.com/news/binance-fake-job-interviews-compromised-ai-tool-hack?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
+      "source": "Cointelegraph",
+      "at": 1793739478574,
       "status": "posted"
     }
   ]

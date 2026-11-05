@@ -1,13 +1,6 @@
 {
   "posted": [
     {
-      "title": "Bitcoin eases to $77,900 as Binance customers pull $3.6 billion after withdrawals reopen",
-      "link": "https://www.coindesk.com/markets/2026/11/02/bitcoin-eases-to-usd77-900-as-binance-customers-pull-usd3-6-billion-after-withdrawals-reopen",
-      "source": "CoinDesk",
-      "at": 1793634053328,
-      "status": "posted"
-    },
-    {
       "title": "Treasury holds $1 trillion as Bitcoin faces a key liquidity test this week",
       "link": "https://cryptoslate.com/treasury-holds-1-trillion-as-bitcoin-faces-a-key-liquidity-test-this-week/",
       "source": "CryptoSlate",
@@ -54,6 +47,13 @@
       "link": "https://www.coindesk.com/markets/2026/11/05/bitcoin-holds-above-usd80-000-after-wednesday-s-jump-as-injective-rallies-on-staked-etf-listing",
       "source": "CoinDesk",
       "at": 1793880902223,
+      "status": "posted"
+    },
+    {
+      "title": "Bitcoin erases post-election gains as Wall Street selloff triggers over $1 billion in crypto liquidations",
+      "link": "https://www.theblock.co/news/markets/2026-11-05-bitcoin-erases-post-election-gains-wall-street-selloff-liquidations-435434",
+      "source": "The Block",
+      "at": 1793911084144,
       "status": "posted"
     }
   ]

@@ -1,13 +1,6 @@
 {
   "posted": [
     {
-      "title": "Liquid Network Restores Full Bitcoin Backing Two Months After $320M Exploit",
-      "link": "https://decrypt.co/382397/liquid-network-restores-full-bitcoin-backing-two-months-after-320m-exploit",
-      "source": "Decrypt",
-      "at": 1793718238010,
-      "status": "posted"
-    },
-    {
       "title": "Binance traces $6.3B hack to fake job interviews, compromised AI tool",
       "link": "https://cointelegraph.com/news/binance-fake-job-interviews-compromised-ai-tool-hack?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
       "source": "Cointelegraph",
@@ -54,6 +47,13 @@
       "link": "https://cointelegraph.com/markets/bitcoin-ether-etfs-lose-post-election-gains-erased?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
       "source": "Cointelegraph",
       "at": 1793956751886,
+      "status": "posted"
+    },
+    {
+      "title": "Crypto Liquidations Top $1 Billion as Bitcoin Tests 11-Week Low",
+      "link": "https://decrypt.co/382717/bitcoin-price-11-week-low-crypto-liquidations-ai-stock",
+      "source": "Decrypt",
+      "at": 1793986046815,
       "status": "posted"
     }
   ]

@@ -1,13 +1,6 @@
 {
   "posted": [
     {
-      "title": "Binance traces $6.3B hack to fake job interviews, compromised AI tool",
-      "link": "https://cointelegraph.com/news/binance-fake-job-interviews-compromised-ai-tool-hack?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
-      "source": "Cointelegraph",
-      "at": 1793739478574,
-      "status": "posted"
-    },
-    {
       "title": "Bitcoin bounces from 7-week low under $76K as Democrats sweep Congress",
       "link": "https://cointelegraph.com/markets/bitcoin-bounces-from-7-week-low-under-76k-as-democrats-eye-congress-sweep?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
       "source": "Cointelegraph",
@@ -54,6 +47,13 @@
       "link": "https://decrypt.co/382717/bitcoin-price-11-week-low-crypto-liquidations-ai-stock",
       "source": "Decrypt",
       "at": 1793986046815,
+      "status": "posted"
+    },
+    {
+      "title": "U.S. Treasury Cuts Off MEXC From U.S. Financial System Over Alleged $16 Billion in Illicit Flows",
+      "link": "https://bitcoinmagazine.com/news/fincen-cuts-off-mexc-us-financial-system",
+      "source": "Bitcoin Magazine",
+      "at": 1794006264793,
       "status": "posted"
     }
   ]

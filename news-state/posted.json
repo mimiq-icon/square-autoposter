@@ -1,13 +1,6 @@
 {
   "posted": [
     {
-      "title": "Binance has spent half its SAFU bitcoin, about $580 million worth, data shows",
-      "link": "https://www.coindesk.com/markets/2026/11/03/binance-has-spent-half-its-safu-bitcoin-about-usd580-million-worth-data-shows",
-      "source": "CoinDesk",
-      "at": 1793688089104,
-      "status": "posted"
-    },
-    {
       "title": "Liquid Network Restores Full Bitcoin Backing Two Months After $320M Exploit",
       "link": "https://decrypt.co/382397/liquid-network-restores-full-bitcoin-backing-two-months-after-320m-exploit",
       "source": "Decrypt",
@@ -54,6 +47,13 @@
       "link": "https://cryptoslate.com/treasury-bought-back-6b-in-bonds-but-dealers-say-bigger-isnt-enough/",
       "source": "CryptoSlate",
       "at": 1793928624936,
+      "status": "posted"
+    },
+    {
+      "title": "Bitcoin, Ether ETFs post $530M outflows as election gains evaporate",
+      "link": "https://cointelegraph.com/markets/bitcoin-ether-etfs-lose-post-election-gains-erased?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
+      "source": "Cointelegraph",
+      "at": 1793956751886,
       "status": "posted"
     }
   ]

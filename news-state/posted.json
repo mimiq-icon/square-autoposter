@@ -1,20 +1,6 @@
 {
   "posted": [
     {
-      "title": "Bitcoin bounces from 7-week low under $76K as Democrats sweep Congress",
-      "link": "https://cointelegraph.com/markets/bitcoin-bounces-from-7-week-low-under-76k-as-democrats-eye-congress-sweep?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
-      "source": "Cointelegraph",
-      "at": 1793783114254,
-      "status": "posted"
-    },
-    {
-      "title": "Circle reports $865 million in Q3 revenue and reserve income, discloses 5% workforce reduction",
-      "link": "https://www.theblock.co/news/business/2026-11-04-circle-reports-865-million-in-q3-revenue-and-reserve-income-discloses-5-workforce-reduction-432671",
-      "source": "The Block",
-      "at": 1793812263252,
-      "status": "posted"
-    },
-    {
       "title": "Bitcoin holds above $80,000 after Wednesday’s jump as injective rallies on staked ETF listing",
       "link": "https://www.coindesk.com/markets/2026/11/05/bitcoin-holds-above-usd80-000-after-wednesday-s-jump-as-injective-rallies-on-staked-etf-listing",
       "source": "CoinDesk",
@@ -62,6 +48,14 @@
       "source": "CryptoSlate",
       "at": 1794019543563,
       "status": "posted"
+    },
+    {
+      "title": "Bitcoin ETFs flip negative for 2026 after $1.28 billion outflow week, worst since June",
+      "link": "https://www.theblock.co/news/markets/2026-11-07-bitcoin-etfs-flip-negative-for-2026-after-1-28-billion-outflow-week-worst-since-june-435984",
+      "source": "The Block",
+      "at": 1794084670072,
+      "status": "posted",
+      "etfFlow": "BTC"
     }
   ]
 }

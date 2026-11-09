@@ -1,27 +1,6 @@
 {
   "posted": [
     {
-      "title": "Bitcoin erases post-election gains as Wall Street selloff triggers over $1 billion in crypto liquidations",
-      "link": "https://www.theblock.co/news/markets/2026-11-05-bitcoin-erases-post-election-gains-wall-street-selloff-liquidations-435434",
-      "source": "The Block",
-      "at": 1793911084144,
-      "status": "posted"
-    },
-    {
-      "title": "Treasury bought back $6B in bonds, but dealers say bigger isn’t enough",
-      "link": "https://cryptoslate.com/treasury-bought-back-6b-in-bonds-but-dealers-say-bigger-isnt-enough/",
-      "source": "CryptoSlate",
-      "at": 1793928624936,
-      "status": "posted"
-    },
-    {
-      "title": "Bitcoin, Ether ETFs post $530M outflows as election gains evaporate",
-      "link": "https://cointelegraph.com/markets/bitcoin-ether-etfs-lose-post-election-gains-erased?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
-      "source": "Cointelegraph",
-      "at": 1793956751886,
-      "status": "posted"
-    },
-    {
       "title": "Crypto Liquidations Top $1 Billion as Bitcoin Tests 11-Week Low",
       "link": "https://decrypt.co/382717/bitcoin-price-11-week-low-crypto-liquidations-ai-stock",
       "source": "Decrypt",
@@ -55,6 +34,13 @@
       "link": "https://cryptoslate.com/one-blackrock-fund-dominates-bitcoins-billion-dollar-etf-exodus/",
       "source": "CryptoSlate",
       "at": 1794166728517,
+      "status": "posted"
+    },
+    {
+      "title": "Bitcoin Price Drops Below $74,000 as Nvidia Probe and Regulation Fears Spark $1 Billion in Liquidations",
+      "link": "https://bitcoinmagazine.com/markets/bitcoin-price-drops-to-73477",
+      "source": "Bitcoin Magazine",
+      "at": 1794245155140,
       "status": "posted"
     }
   ]

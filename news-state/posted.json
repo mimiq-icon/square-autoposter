@@ -42,6 +42,14 @@
       "source": "CoinDesk",
       "at": 1794298150586,
       "status": "pending"
+    },
+    {
+      "title": "BlackRock Bitcoin ETF outflows hit $1.66B over seven trading sessions",
+      "link": "https://cointelegraph.com/markets/blackrock-ibit-bitcoin-etf-outflows?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
+      "source": "Cointelegraph",
+      "at": 1794303740042,
+      "status": "posted",
+      "etfFlow": "BTC"
     }
   ]
 }

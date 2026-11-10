@@ -1,27 +1,6 @@
 {
   "posted": [
     {
-      "title": "Crypto Liquidations Top $1 Billion as Bitcoin Tests 11-Week Low",
-      "link": "https://decrypt.co/382717/bitcoin-price-11-week-low-crypto-liquidations-ai-stock",
-      "source": "Decrypt",
-      "at": 1793986046815,
-      "status": "posted"
-    },
-    {
-      "title": "U.S. Treasury Cuts Off MEXC From U.S. Financial System Over Alleged $16 Billion in Illicit Flows",
-      "link": "https://bitcoinmagazine.com/news/fincen-cuts-off-mexc-us-financial-system",
-      "source": "Bitcoin Magazine",
-      "at": 1794006264793,
-      "status": "posted"
-    },
-    {
-      "title": "Bitcoin faces $70,000 risk as investors realize $2 billion in losses and US jobs shock deepens pressure",
-      "link": "https://cryptoslate.com/bitcoin-faces-70000-risk-as-investors-realize-2-billion-in-losses-and-us-jobs-shock-deepens-pressure/",
-      "source": "CryptoSlate",
-      "at": 1794019543563,
-      "status": "posted"
-    },
-    {
       "title": "Bitcoin ETFs flip negative for 2026 after $1.28 billion outflow week, worst since June",
       "link": "https://www.theblock.co/news/markets/2026-11-07-bitcoin-etfs-flip-negative-for-2026-after-1-28-billion-outflow-week-worst-since-june-435984",
       "source": "The Block",
@@ -42,6 +21,13 @@
       "source": "Bitcoin Magazine",
       "at": 1794245155140,
       "status": "posted"
+    },
+    {
+      "title": "Coinbase, Kalshi and Payward backs CFTC in lawsuit over single-stock perp futures",
+      "link": "https://www.theblock.co/news/regulation/2026-11-10-coinbase-kalshi-payward-back-cftc-perps-436971",
+      "source": "The Block",
+      "at": 1794294514085,
+      "status": "pending"
     }
   ]
 }

@@ -1,14 +1,6 @@
 {
   "posted": [
     {
-      "title": "Bitcoin ETFs flip negative for 2026 after $1.28 billion outflow week, worst since June",
-      "link": "https://www.theblock.co/news/markets/2026-11-07-bitcoin-etfs-flip-negative-for-2026-after-1-28-billion-outflow-week-worst-since-june-435984",
-      "source": "The Block",
-      "at": 1794084670072,
-      "status": "posted",
-      "etfFlow": "BTC"
-    },
-    {
       "title": "One BlackRock fund dominates Bitcoin’s billion-dollar ETF exodus",
       "link": "https://cryptoslate.com/one-blackrock-fund-dominates-bitcoins-billion-dollar-etf-exodus/",
       "source": "CryptoSlate",
@@ -56,6 +48,13 @@
       "link": "https://bitcoinmagazine.com/news/trump-media-pledges-73-percent-bitcoin",
       "source": "Bitcoin Magazine",
       "at": 1794332711269,
+      "status": "posted"
+    },
+    {
+      "title": "Trump Media Posts $410 Million Profit. Bitcoin Gains Did the Heavy Lifting",
+      "link": "https://decrypt.co/382967/trump-media-posts-410-million-profit-bitcoin-gains",
+      "source": "Decrypt",
+      "at": 1794352486900,
       "status": "posted"
     }
   ]

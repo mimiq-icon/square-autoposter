@@ -1,13 +1,6 @@
 {
   "posted": [
     {
-      "title": "One BlackRock fund dominates Bitcoin’s billion-dollar ETF exodus",
-      "link": "https://cryptoslate.com/one-blackrock-fund-dominates-bitcoins-billion-dollar-etf-exodus/",
-      "source": "CryptoSlate",
-      "at": 1794166728517,
-      "status": "posted"
-    },
-    {
       "title": "Bitcoin Price Drops Below $74,000 as Nvidia Probe and Regulation Fears Spark $1 Billion in Liquidations",
       "link": "https://bitcoinmagazine.com/markets/bitcoin-price-drops-to-73477",
       "source": "Bitcoin Magazine",
@@ -69,6 +62,13 @@
       "link": "https://cointelegraph.com/news/barclays-blackrock-ibit-boost-key-q3-filings?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
       "source": "Cointelegraph",
       "at": 1794406273510,
+      "status": "posted"
+    },
+    {
+      "title": "Bitcoin Short-Term Holders Send $3.6 Billion in BTC to Exchanges at a Loss",
+      "link": "https://decrypt.co/383077/bitcoin-short-term-holders-send-3-illion-btc-exchanges-loss",
+      "source": "Decrypt",
+      "at": 1794432364404,
       "status": "posted"
     }
   ]

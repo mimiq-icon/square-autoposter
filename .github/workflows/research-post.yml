@@ -1,14 +1,18 @@
 name: Education and Research Post
 
-# v11: the desk's second content line. Two short, data-grounded education
-# posts a week (Tuesday and Friday), and once a month — the first Saturday —
-# a long-form research article instead. Every piece is written ONLY from
+# v11: the desk's second content line. A short education explainer on Tuesday,
+# a short DATA post on Friday (v11.9: a research topic with a ranked chart of
+# its own numbers), and once a month — the first Saturday — a long-form
+# research article. Every piece is written ONLY from
 # facts fetched from free sources (DefiLlama, mempool.space, Wikipedia), a
 # validator rejects anything the facts don't support, and the full text goes
 # to your Telegram for a one-tap approval before anything is published.
 #
 # Schedules (all UTC):
-#   Tue 11:07 and Fri 11:07  -> short explainer post (text + explainer slide)
+#   Tue 11:07                -> short explainer post (text + explainer slide)
+#   Fri 11:07                -> short data post (text + ranked-bar chart);
+#                               RESEARCH_DATA_DAY: 'off' (or another weekday)
+#                               changes that, and Friday then runs an explainer
 #   Sat 11:07                -> the monthly article, but ONLY on the first
 #                               Saturday of the month; other Saturdays run
 #                               and cleanly do nothing (checked in code,
@@ -35,11 +39,11 @@ on:
         type: boolean
         default: true
       mode:
-        description: 'auto | short | article'
+        description: 'auto | short | data | article'
         required: false
         type: choice
         default: 'auto'
-        options: ['auto', 'short', 'article']
+        options: ['auto', 'short', 'data', 'article']
       install_renderer:
         description: 'Install the PNG renderer for the explainer slide/cover (~15s)'
         required: false
@@ -83,6 +87,7 @@ jobs:
           RESEARCH_MODE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.mode || 'auto' }}
           RESEARCH_FORCE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.force || 'false' }}
           RESEARCH_STATE_FILE: research-state/published.json
+          RESEARCH_DATA_DAY: ${{ vars.RESEARCH_DATA_DAY }}
           BINANCE_SQUARE_OPENAPI_KEY: ${{ secrets.BINANCE_SQUARE_OPENAPI_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}

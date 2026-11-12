@@ -29,12 +29,28 @@ git commit -m "%MSG%"
 if errorlevel 1 goto fail
 
 :push
+REM The bot itself commits to main (a claim per news story), so the remote is
+REM almost always ahead of this folder. Pull-and-rebase first, otherwise every
+REM push is rejected as non-fast-forward. This never forces and never discards
+REM local commits: they are replayed on top of the remote's.
+git pull --rebase origin main
+if errorlevel 1 goto conflict
+
 git push origin main
 if errorlevel 1 goto fail
 echo.
 echo Pushed. The GitHub test workflow should now run and go green.
 pause
 exit /b 0
+
+:conflict
+echo.
+echo The pull hit a conflict. Nothing was pushed and nothing was forced.
+echo Open the files git listed (usually news-state\posted.json), keep the
+remotely-added claims, then run: git rebase --continue
+echo Then run this file again.
+pause
+exit /b 1
 
 :fail
 echo.

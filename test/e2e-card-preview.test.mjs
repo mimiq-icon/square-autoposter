@@ -131,7 +131,7 @@ test("research reliability 1: both independent sources answer -> logged, concept
   const w = world(); const pc = w.clone("pc");
   const r = await run(pc, w.mocklog, "research", { DRY_RUN: "true", RESEARCH_FORCE: "true", RESEARCH_TOPIC: "what-is-tvl", MOCK_AI_TEXT: TVL_COPY });
   check("exit 0 and a preview", r.code === 0 && previewPng(pc), r.out.slice(-900));
-  check("each source logged with size and timing", /ok: DefiLlama \(defillama-protocols\): \d+ chars, [\d.]+s/.test(r.out) && /ok: Wikipedia \(Total value locked\)/.test(r.out), r.out.slice(-900));
+  check("each source logged with size and timing", /ok: DefiLlama \(defillama-protocols\): \d+ chars, [\d.]+s/.test(r.out) && /ok: Wikipedia \(Decentralized finance\)/.test(r.out), r.out.slice(-900));
   check("concept notes added to the facts", /notes: concept notes added to the facts/.test(r.out), r.out.slice(-900));
   check("2 of 2 sources, minimum 2", /Sources: 2 of 2 independent sources answered; minimum to post is 2\./.test(r.out), r.out.slice(-900));
 });

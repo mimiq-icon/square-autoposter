@@ -178,10 +178,13 @@ Every daily-post run writes a **Job Summary** (visible in the Actions run's "Sum
 ## Testing
 
 ```
+npm install --no-save @resvg/resvg-js   # optional, but CI installs it
 node --test
 ```
 
-No `npm install` needed. The suite covers the pure functions (formatters, template builders, the AI-output validation gates — news AND research AND the weekly article — the card engine, cashtag/hashtag logic, OAuth 1.0a signing, news clustering/scoring/validation, ETF-flow pacing, opinion-attribution rules, alert level/move detection and cooldowns, the research topic engine and fact parsers, the Telegram approval flow against a fake server, the git claim lock against real local git remotes) with no real network calls. **521 tests.**
+No `npm install` is needed for the suite to run. Install the PNG renderer if you want the **same gate CI runs**: without it, the 17 end-to-end card/preview tests skip silently, and a real failure inside them shows up only as a red Actions run. That happened once (a test still asserted a Wikipedia title that v11.10 had replaced) and cost a round of "it passes locally". With it installed: **521 tests, 521 pass, 0 skipped.**
+
+The suite covers the pure functions (formatters, template builders, the AI-output validation gates — news AND research AND the weekly article — the card engine, cashtag/hashtag logic, OAuth 1.0a signing, news clustering/scoring/validation, ETF-flow pacing, opinion-attribution rules, alert level/move detection and cooldowns, the research topic engine and fact parsers, the Telegram approval flow against a fake server, the git claim lock against real local git remotes) with no real network calls. **521 tests.**
 
 `test/e2e-news.test.mjs` also runs the real `post.mjs` in news mode as two "machines" at once against a local bare git repo, with `fetch` mocked (`test-support/mock-fetch.mjs`), and asserts exactly one post comes out — plus the Telegram approve/reject/timeout paths, local-model fallback, publish-failure claim release and feed caching. `test/e2e-alerts-weekly.test.mjs` does the same for alerts (two machines, one alert, cooldown rerun, the AI-invents-a-number rejection, the 220009 daily-limit path) and the weekly article (full-text Telegram approval, invented-number fallback to the template, dry run). Both need `git` installed and are skipped without it.
 

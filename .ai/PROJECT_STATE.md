@@ -1,6 +1,6 @@
 # The Tape (square-autoposter): project state
 
-**Version:** v11.10 (operating-loop pass)  |  **Tests:** 521/521 passing (`node --test`; 17 skip without `@resvg/resvg-js`)  |  **Pushed:** yes (`bdec584`, then this state update)
+**Version:** v11.10 (operating-loop pass)  |  **Tests:** 521/521 passing (`node --test`; 17 skip without `@resvg/resvg-js`)  |  **Pushed:** yes — `origin/main` is in sync; check `git log -1` for the tip
 
 ## What it is
 Binance Square auto-poster: news, price alerts, research/education, weekly AI article. Telegram approval flow, branded image cards (SVG -> PNG), git-shared state in `news-state/`.

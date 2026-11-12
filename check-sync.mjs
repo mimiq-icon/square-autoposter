@@ -80,11 +80,17 @@ export function formatSync(r) {
   shown(r.changed.map((c) => `${label[c.status[0]] || c.status}: ${c.file}`), "  Files that differ from GitHub:");
   shown(r.untracked, "  New files here that GitHub doesn't have:");
   if (["behind", "diverged", "modified"].includes(r.state)) {
-    lines.push("  To make this folder identical to GitHub (discards local edits to code files; the .env file is NOT touched):");
+    lines.push("  To catch up safely (keeps commits this folder has, replays them on top):");
+    lines.push("      git pull --rebase origin main");
+    lines.push("  To make this folder exactly GitHub's — DISCARDS commits and edits here (.env is never touched):");
     lines.push("      git fetch origin");
     lines.push("      git reset --hard origin/main");
   }
-  if (r.state === "ahead") lines.push("  To publish them:  git push   (or ignore: the bot's own state files are handled automatically)");
+  if (r.state === "ahead") {
+    // A plain push is rejected whenever the bot has committed a claim since the
+    // last pull, so tell the user the order that always works.
+    lines.push("  To publish them:  save-and-push.bat   (git pull --rebase origin main, then git push)");
+  }
   return lines;
 }
 

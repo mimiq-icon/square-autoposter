@@ -2,7 +2,7 @@
 
 Your Windows 11 PC (i5-8365U, 8 GB RAM, no GPU) is plenty for this. The PC checks the news feeds every ~2.5 minutes and writes posts with a small local AI model. GitHub keeps running hourly in the background, so **the PC does not need to be on 24/7**; when it's off or asleep, GitHub carries on.
 
-Before you start, you need these in the repo (upload the current files to GitHub and commit; see CHANGELOG.md for what each version added): `post.mjs`, `news.mjs`, `cards.mjs`, `research.mjs`, `alerts.mjs`, `article.mjs`, `style.mjs`, `news-sync.mjs`, `telegram.mjs`, `local-runner.mjs`, `check-sync.mjs`, `run-mode.mjs`, `make-avatar.mjs`, `preview-cards.mjs`, `brand/` (logo and bundled fonts), `test-support/`, `start-news.bat`, `check-sync.bat`, `save-and-push.bat`, `dry-run-all.bat`, `dry-run-all.ps1`, `scorecard.csv`, `.env.example`, `.gitignore`, and the `.github/workflows/` folder.
+Before you start, you need these in the repo (clone the repo or commit from the PC with `save-and-push.bat` — do not upload a zip through the GitHub web page; see CHANGELOG.md for what each version added): `post.mjs`, `news.mjs`, `cards.mjs`, `research.mjs`, `alerts.mjs`, `article.mjs`, `style.mjs`, `news-sync.mjs`, `telegram.mjs`, `local-runner.mjs`, `check-sync.mjs`, `run-mode.mjs`, `make-avatar.mjs`, `preview-cards.mjs`, `brand/` (logo and bundled fonts), `test-support/`, `start-news.bat`, `check-sync.bat`, `save-and-push.bat`, `dry-run-all.bat`, `dry-run-all.ps1`, `scorecard.csv`, `.env.example`, `.gitignore`, and the `.github/workflows/` folder.
 
 The PC runner also checks prices for **alerts** ("Bitcoin falls below $83,000") in the same cycle, and every alert can wait for your Telegram tap (set the `TELEGRAM_*` values in `.env`; `ALERT_APPROVAL=off` posts them automatically). If a coin just moved sharply, that cycle takes a few seconds longer.
 
@@ -28,13 +28,16 @@ cd square-autoposter
 
 It has to be a real clone: the PC and GitHub avoid double-posting by sharing a file through git, which doesn't work from a zip download.
 
-Check that pushing works **without a password prompt** (the runner can't answer prompts):
+Check that talking to GitHub works **without a password prompt** (the runner can't answer prompts):
 
 ```
-git push --dry-run origin main
+git fetch origin
+node check-sync.mjs
 ```
 
-A browser sign-in window may appear the first time; sign in to GitHub once. You should end up seeing `Everything up-to-date`. If this fails, fix it first. Stay on the `main` branch.
+A browser sign-in window may appear the first time; sign in to GitHub once. `check-sync` should report that the folder is up to date (or behind, which is normal — the bot commits a claim to `main` every time it posts).
+
+Do **not** test with `git push` on a fresh clone: it will be rejected as non-fast-forward, because the bot's own claim commits make the remote move. That is expected, not a broken login. To publish your own changes, double-click `save-and-push.bat`, which fetches, rebases and pushes in that order. **Never `git push --force`** — the claim history on `main` is what stops the bot from reposting stories it already published.
 
 ## 3. Download the AI model
 
@@ -118,10 +121,14 @@ Double-click **`save-and-push.bat`** to commit and push this folder's changes. P
 Double-click **`check-sync.bat`** (or run `node check-sync.mjs`). It fetches GitHub's `main` and compares the *code* (the bot's own `news-state/` and `logs/` files are ignored because they change all day by design). You get one of:
 
 - `Up to date` - identical to GitHub. Nothing to do.
-- `BEHIND` - GitHub has newer commits. It prints the fix: `git fetch origin` then `git reset --hard origin/main` (this discards local edits to code files; your `.env` is never touched).
+- `BEHIND` - GitHub has newer commits (normal: the bot commits a claim every time it posts). It prints two fixes — `git pull --rebase origin main`, which keeps your own commits, and `git reset --hard origin/main`, which discards them. Use the rebase unless you are certain nothing here is unpublished.
 - `MODIFIED` / `AHEAD` / `DIVERGED` - it lists the files and says what to do.
 
 The runner prints the same line every time it starts (`code: ...`).
+
+## The weekly scorecard (`scorecard.csv`)
+
+Once posts are going out, add one row per post: date, format, title, views, likes, comments, follows, notes. The bot cannot see views or likes, so this file is the only way a format decision ever gets made on evidence rather than taste. After about 20 rows, keep the formats that earn attention and cut or merge the rest.
 
 ## Dry-run EVERYTHING on the PC
 
@@ -141,27 +148,26 @@ It is a dry run unless you add `--live`.
 
 ## Updating the code later
 
-If you were given new files (a zip), the safest way is to let this PC push them to GitHub, since it already has push access:
+Do not copy a zip over this folder. Overwriting files is how the repo ended up with duplicate tests and a red suite. Two safe flows:
+
+**You have changes here to publish** (the normal case): double-click **`save-and-push.bat`**. It commits, then `git pull --rebase`, then pushes. If the rebase hits a conflict it stops and tells you what to do; nothing is forced.
+
+**You only need to catch up with GitHub** (someone pushed code, or you want the bot's latest claims):
 
 ```
 cd C:\Users\augus\square-autoposter
 git fetch origin
-git reset --hard origin/main
-```
-
-Now unzip the new files and copy them **over** this folder (overwrite when asked; do not delete anything). Then:
-
-```
-git add -A
-git status
-git commit -m "update"
-git push
+git pull --rebase origin main
 node check-sync.mjs
 ```
 
-`git status` should list only code files, `brand/` and `.github/workflows/`; it must **not** list `news-state/` or `research-state/` (the reset above makes sure of that, so the PC can never push a stale copy of the shared state). The last command should say "Up to date". If `git push` refuses the `.github/workflows/` files (GitHub requires a special permission for workflow files), upload just those files in the GitHub web page (**Add file -> Upload files**) and run `git fetch origin` then `git reset --hard origin/main` again.
+`--rebase` replays your own commits on top instead of merging, and it never discards them.
 
-If GitHub already has the new version and you only need to catch up: `git fetch origin` then `git reset --hard origin/main`. (Plain `git pull` can complain about the state file; the reset form avoids that.)
+`git reset --hard origin/main` still works, but it **throws away every commit this folder has that GitHub does not**. Only use it when you are certain nothing here is unpublished, and never as a reflex after a rejected push.
+
+If a push is refused because it touches `.github/workflows/`, the stored GitHub login is missing the `workflow` scope. Run `gh auth login` (or re-authorise Git Credential Manager) and choose the workflow scope; then push again. Do not work around it by re-uploading files in the web page.
+
+`git status` before a commit should list code, `brand/`, `.github/workflows/` and the bot's own `news-state/` files (those are meant to be committed — the claim lock lives there). It should never list `.env`, `logs/`, `card-previews/` or `weekly-draft.json`; those are gitignored.
 
 ## Troubleshooting
 
@@ -169,7 +175,7 @@ If GitHub already has the new version and you only need to catch up: `git fetch 
 |---|---|
 | `Ollama not reachable` | Start Ollama from the Start menu. Until then posts use cloud AI or the plain-headline fallback. |
 | `model "…" is not installed` | `ollama pull qwen2.5:3b` |
-| `Could not read shared state from git` | No internet, or git can't sign in. Re-run `git push --dry-run origin main`. |
+| `Could not read shared state from git` | No internet, or git can't sign in. Re-run `git fetch origin` and check it completes without asking for a password. |
 | `not a git clone` | You downloaded a zip. Use `git clone` (step 2). |
 | `Standing down: last post was N min ago` | Normal; the minimum gap. |
 | `Another runner pushed first … re-reading` | Normal; the PC and GitHub raced and the other won. |

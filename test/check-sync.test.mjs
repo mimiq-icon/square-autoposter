@@ -47,7 +47,11 @@ test("check-sync: GitHub has a newer commit => behind, with the fix command and 
   assert.equal(r.state, "behind"); assert.equal(r.behind, 1);
   assert.deepEqual(r.changed.map((c) => c.file), ["post.mjs"]);
   const text = formatSync(r).join("\n");
-  assert.match(text, /BEHIND/); assert.match(text, /post\.mjs/); assert.match(text, /git reset --hard origin\/main/);
+  assert.match(text, /BEHIND/); assert.match(text, /post\.mjs/);
+  // The safe fix comes first; the destructive one is still listed but labelled.
+  assert.match(text, /git pull --rebase origin main/);
+  assert.match(text, /git reset --hard origin\/main/);
+  assert.ok(text.indexOf("git pull --rebase") < text.indexOf("git reset --hard"), "the non-destructive advice comes first");
 });
 
 test("check-sync: a locally edited code file, or a new file, is 'modified'", { skip: !hasGit }, () => {

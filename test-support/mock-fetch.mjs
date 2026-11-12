@@ -1,4 +1,5 @@
 // test-support/mock-fetch.mjs — preload used by test/e2e-news.test.mjs (node --import). Replaces global fetch with fixtures for feeds, Groq, Ollama, Telegram and Square. Behaviour is switched by MOCK_* env vars. Not a test file itself.
+import * as F from "./fixtures.mjs";
 import fs from "fs";
 const rss = (items) => `<?xml version="1.0"?><rss version="2.0"><channel>${items.map(([t, mins, d]) =>
   `<item><title><![CDATA[${t}]]></title><link>https://ex.test/${encodeURIComponent(t)}</link><pubDate>${new Date(Date.now() - mins * 60000).toUTCString()}</pubDate><description><![CDATA[<p>${d || ""}</p>]]></description></item>`).join("")}</channel></rss>`;
@@ -41,6 +42,11 @@ function binanceMock(u) {
     if (E.MOCK_KLINES === "fail") return new Response("nope", { status: 500 });
     const s = url.searchParams.get("symbol").slice(0, -4);
     const n = Number(url.searchParams.get("limit"));
+    if (url.searchParams.get("interval") === "1h" && E.MOCK_HISTORY === "low" && n >= 100) {
+      // 168 hourly candles: high everywhere except one old dip, so the current price is "lowest since" that dip.
+      const now = Date.now(); const pr = priceOf(s);
+      return json(Array.from({ length: n }, (_, i) => { const t = now - (n - i) * 3600000; const dip = i === n - 100; const hi = dip ? pr * 0.99 : pr * 1.08; const lo = dip ? pr * 0.97 : pr * 1.04; return [t, String(hi), String(hi), String(lo), String(hi), "1000"]; }));
+    }
     const first = url.searchParams.get("interval") === "5m" ? startOf(s) : priceOf(s) * 0.97;
     return json(Array.from({ length: n }, (_, i) => { const c = first + ((priceOf(s) - first) * i) / Math.max(1, n - 1); return [Date.now() - (n - i) * 60000, String(i === 0 ? first : c), String(c), String(c), String(c)]; }));
   }
@@ -52,6 +58,13 @@ function coingeckoMock(u) {
     const ids = (url.searchParams.get("ids") || "").split(",").filter(Boolean);
     return json(ids.map((id) => { const s = COINS_MOCK[id]; const pr = priceOf(s); return { id, symbol: s.toLowerCase(), current_price: pr, price_change_percentage_24h_in_currency: chgOf(s), price_change_percentage_7d_in_currency: 3.4, sparkline_in_7d: { price: Array.from({ length: 30 }, (_, i) => pr * (0.97 + i * 0.001)) }, total_volume: 1e9, market_cap: 1e11, market_cap_rank: 1, high_24h: pr * 1.01, low_24h: pr * 0.99 }; }));
   }
+  if (url.pathname.endsWith("/simple/price")) {
+    if (E.MOCK_CG_PRICE === "fail" || E.MOCK_BINANCE === "fail") return new Response("down", { status: 503 });
+    const ids = (url.searchParams.get("ids") || "").split(",").filter(Boolean);
+    const out = {};
+    for (const id of ids) { const s = COINS_MOCK[id]; if (s) out[id] = { usd: id === "bitcoin" && E.MOCK_CG_BTC ? Number(E.MOCK_CG_BTC) : priceOf(s) }; }
+    return json(out);
+  }
   if (url.pathname.endsWith("/global")) return json({ data: { total_market_cap: { usd: 2.74e12 }, total_volume: { usd: 1.1e11 }, market_cap_percentage: { btc: 60.1, eth: 12.3 }, market_cap_change_percentage_24h_usd: -0.5 } });
   if (url.pathname.endsWith("/search/trending")) return json({ coins: [{ item: { symbol: "PRL", name: "Pearl", market_cap_rank: 97 } }] });
   return new Response("not mocked: " + u, { status: 404 });
@@ -62,6 +75,19 @@ globalThis.fetch = async (url, opts = {}) => {
   if (u.includes("api.coingecko.com")) return coingeckoMock(u);
   if (u.includes("alternative.me")) return json({ data: [{ value: "59", value_classification: "Greed" }] });
   if (u.includes("quickchart.io")) { log("quickchart"); return new Response(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), { status: 200 }); }
+  if (u.includes("stablecoins.llama.fi/stablecoins")) { log("llama stablecoins"); return json(F.STABLECOINS); }
+  if (u.includes("api.llama.fi/v2/chains")) { log("llama chains"); return json(F.CHAINS); }
+  if (u.includes("api.llama.fi/overview/fees")) { log("llama fees"); return json(F.FEES); }
+  if (u.includes("mempool.space/api/v1/difficulty-adjustment")) return json(F.difficulty());
+  if (u.includes("mempool.space/api/blocks/tip/height")) return json(F.TIP_HEIGHT);
+  if (u.includes("mempool.space/api/v1/mining/pools/1w")) return json(F.POOLS);
+  if (u.includes("mempool.space/api/v1/mining/hashrate/3d")) return json(F.HASHRATE);
+  if (u.includes("api.llama.fi/protocols")) {
+    log("llama protocols");
+    if (E.MOCK_LLAMA === "503") return new Response("down", { status: 503 });
+    if (E.MOCK_LLAMA === "empty") return json([]);
+    return json([{ name: "Lido", symbol: "LDO", tvl: 33000000000, change_1d: -0.6 }, { name: "Aave", symbol: "AAVE", tvl: 21000000000, change_1d: 1.4 }]);
+  }
   if (u.includes("en.wikipedia.org/api/rest_v1/page/summary/")) { const title = decodeURIComponent(u.split("/summary/")[1] || "Topic"); return json({ title, extract: title === "Stablecoin" ? "A stablecoin is a type of cryptocurrency designed to keep a steady value relative to a reference asset such as the US dollar." : `${title} is a topic in crypto.` }); }
   if (u.includes("/image/presignedUrl")) { log("IMAGE-UPLOAD"); return json({ code: "000000", data: { presignedUrl: "https://s3.example.test/put", fileTicket: "t1" } }); }
   if (u.includes("s3.example.test")) return new Response("", { status: 200 });

@@ -3214,7 +3214,7 @@ function writeResearchSummary({ outcome, topic, kind, provider, text, title, id,
   if (topic) {
     lines.push(
       `**Topic:** ${topic.title} (${kind})`,
-      `**Written by:** ${provider ? `AI (${provider})` : "skipped"} · **Dry run:** ${dryRun ? "yes" : "no"}`,
+      `**Written by:** ${provider === "template" ? "data template (no AI copy)" : provider ? `AI (${provider})` : "skipped"} · **Dry run:** ${dryRun ? "yes" : "no"}`,
       factHealth ? `**Fact sources:** ${factHealth.join(", ")}` : "",
       failures && failures.length ? `**Failed sources:** ${failures.join("; ")}` : "",
       id && id !== "dry-run-id" ? `**Post:** [View](https://www.binance.com/square/post/${id})` : "",

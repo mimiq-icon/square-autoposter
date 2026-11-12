@@ -41,6 +41,7 @@ import {
   percentEncode,
   buildOAuth1Header,
   buildQuickChartPreviewUrl,
+  buildDailyChangeChartConfig,
   buildDraftIssueBody,
   parseDraftIssue,
 } from "../post.mjs";
@@ -441,6 +442,53 @@ describe("template builders return valid, non-empty posts", () => {
 // parseDraftIssue are two halves of a round trip: one writes a GitHub Issue
 // body, the other reads it back (possibly after a human has edited it).
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// v11.11: the chart must show the coins the post is about. A post about $ARB
+// used to ship with a chart of $BNB/$SOL/$XRP (they came from an independent
+// watchlist rotation), so the image contradicted the words.
+// ---------------------------------------------------------------------------
+describe("buildDailyChangeChartConfig: the image matches the text", () => {
+  const row = (symbol, change24h) => ({ symbol, change24h });
+  const data = [row("BTC", -1.53), row("ETH", -1.99), row("BNB", -3.44), row("SOL", -3), row("XRP", -2.06), row("ADA", -3.5), row("DOGE", -3.44), row("LINK", -4.12)];
+  const broad = [row("ARB", -13), row("UNI", -10.2), row("TIA", 15.9), row("RUNE", 11.1)];
+  const labels = (cfg) => cfg.data.labels;
+
+  test("three named coins -> exactly those, in the order they appear", () => {
+    const cfg = buildDailyChangeChartConfig(data, 3, "$ADA: $0.205\n$DOGE: $0.08\n$LINK: $11.89", []);
+    assert.deepEqual(labels(cfg), ["$ADA", "$DOGE", "$LINK"]);
+    assert.deepEqual(cfg.data.datasets[0].data, [-3.5, -3.44, -4.12]);
+  });
+
+  test("a mover outside the watchlist still gets its own bar", () => {
+    const cfg = buildDailyChangeChartConfig(data, 3, "$ARB shed 13% while $UNI fell 10.2%", broad);
+    assert.deepEqual(labels(cfg), ["$ARB", "$UNI"]);
+  });
+
+  test("one named coin -> no chart (a single bar says nothing)", () => {
+    assert.equal(buildDailyChangeChartConfig(data, 3, "Did you notice $ARB shedding 13% in a day?", broad), null);
+  });
+
+  test("coins we have no numbers for -> no chart, never an unrelated one", () => {
+    assert.equal(buildDailyChangeChartConfig(data, 3, "$PEPE and $WIF moved", []), null);
+  });
+
+  test("no cashtags at all -> the old watchlist rotation (snapshot posts)", () => {
+    const cfg = buildDailyChangeChartConfig(data, 0, "Crypto market snapshot", []);
+    assert.equal(labels(cfg).length, 3);
+    assert.ok(labels(cfg).every((l) => data.some((d) => `$${d.symbol}` === l)));
+  });
+
+  test("mixed: only the named coins with data are charted", () => {
+    const cfg = buildDailyChangeChartConfig(data, 3, "$PEPE up, $BTC down, $ETH down", []);
+    assert.deepEqual(labels(cfg), ["$BTC", "$ETH"]);
+  });
+
+  test("caps at three bars even when the post names more", () => {
+    const cfg = buildDailyChangeChartConfig(data, 3, "$BTC $ETH $BNB $SOL $XRP", []);
+    assert.equal(labels(cfg).length, 3);
+  });
+});
+
 describe("buildQuickChartPreviewUrl", () => {
   test("returns a GET url embedding the chart config, no network call", () => {
     const url = buildQuickChartPreviewUrl({ type: "line", data: { labels: ["a"], datasets: [] } });

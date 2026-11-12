@@ -74,11 +74,11 @@ describe("checkOllama", () => {
 });
 
 describe("buildChildEnv", () => {
-  test("forces news mode, turns git sync on when git is there, puts Ollama first", () => {
+  test("forces news mode, turns git sync on when git is there, leaves cloud models first (Ollama is only the backup)", () => {
     const e = buildChildEnv({ OLLAMA_MODEL: "qwen2.5:3b" }, { gitOk: true });
     assert.equal(e.RUN_MODE, "news");
     assert.equal(e.NEWS_GIT_SYNC, "true");
-    assert.equal(e.AI_PROVIDER_ORDER, "ollama,groq,openrouter,gemini");
+    assert.equal(e.AI_PROVIDER_ORDER, undefined);
     assert.ok(e.NEWS_FEED_CACHE_FILE);
   });
   test("respects explicit settings; git sync off without git; --dry-run forces DRY_RUN", () => {

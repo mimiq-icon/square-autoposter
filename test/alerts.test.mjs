@@ -12,7 +12,7 @@ import {
 import { validateNewsCopy, parseNewsAiOutput } from "../news.mjs";
 
 const NOW = Date.UTC(2026, 9, 19, 12, 0, 0);
-const snap = (o) => ({ symbol: "BTC", price: 82950, start: 83420, change24h: -1.2, high24h: 84100, low24h: 81900, ...o });
+const snap = (o) => ({ symbol: "BTC", price: 82700, start: 83420, change24h: -1.2, high24h: 84100, low24h: 81900, ...o });
 
 describe("niceStep", () => {
   test("gives round steps near 1.25% of price", () => {
@@ -87,7 +87,7 @@ describe("facts, prompt, template, validation", () => {
   const [a] = detectAlerts({ snapshots: [snap()], nowMs: NOW });
   test("facts contain every figure the post may use", () => {
     const f = alertFacts(a);
-    for (const s of ["$82,950", "$83,000", "$83,420", "-1.2%", "$84,100", "$81,900", "fell below"]) assert.ok(f.includes(s), s);
+    for (const s of ["$82,700", "$83,000", "$83,420", "-1.2%", "$84,100", "$81,900", "fell below"]) assert.ok(f.includes(s), s);
   });
   test("prompt carries the facts and forbids invention", () => {
     const p = buildAlertPrompt(a);
@@ -96,19 +96,19 @@ describe("facts, prompt, template, validation", () => {
   });
   test("template headline is data-only and passes the news validator", () => {
     const t = buildAlertTemplate(a);
-    assert.equal(t.headline, "Bitcoin falls below $83,000, now trading at $82,950");
+    assert.equal(t.headline, "Bitcoin falls below $83,000, now trading at $82,700");
     assert.deepEqual(validateNewsCopy({ headline: t.headline, context: null }, alertFacts(a)), { ok: true });
   });
   test("a faithful AI answer validates; an invented number is rejected", () => {
-    const good = parseNewsAiOutput("HEADLINE: Bitcoin drops below $83,000 and now trades at $82,950\nCONTEXT: It is down 1.2% over the past 24 hours.");
+    const good = parseNewsAiOutput("HEADLINE: Bitcoin drops below $83,000 and now trades at $82,700\nCONTEXT: It is down 1.2% over the past 24 hours.");
     assert.equal(validateNewsCopy(good, alertFacts(a)).ok, true);
-    const bad = parseNewsAiOutput("HEADLINE: Bitcoin drops below $83,000 and now trades at $82,950\nCONTEXT: Analysts see $90,000 next.");
+    const bad = parseNewsAiOutput("HEADLINE: Bitcoin drops below $83,000 and now trades at $82,700\nCONTEXT: Analysts see $90,000 next.");
     assert.equal(validateNewsCopy(bad, alertFacts(a)).ok, false);
   });
   test("move-kind template and facts", () => {
     const [m] = detectAlerts({ snapshots: [snap({ start: 82950, change24h: 7.34 })], nowMs: NOW });
     assert.equal(m.kind, "move");
-    assert.equal(buildAlertTemplate(m).headline, "Bitcoin is up 7.3% in 24 hours, now at $82,950");
+    assert.equal(buildAlertTemplate(m).headline, "Bitcoin is up 7.3% in 24 hours, now at $82,700");
   });
 });
 

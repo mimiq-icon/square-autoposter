@@ -20,10 +20,10 @@ test("buildRunEnv: dry by default, forced even if .env says DRY_RUN=false", () =
   assert.equal(e.DRY_RUN, "true"); assert.equal(e.RUN_MODE, "alerts"); assert.equal(e.NEWS_GIT_SYNC, "true"); assert.equal(e.GROQ_API_KEY, "k");
 });
 
-test("buildRunEnv: --live does not set DRY_RUN; extras are applied; local model first when configured", () => {
+test("buildRunEnv: --live does not set DRY_RUN; extras are applied; cloud models stay first even when a local model is configured", () => {
   const e = buildRunEnv({ OLLAMA_MODEL: "qwen2.5:3b" }, { name: "research", live: true, extra: { RESEARCH_TOPIC: "what-is-tvl" }, gitOk: false });
   assert.equal(e.DRY_RUN, undefined); assert.equal(e.RESEARCH_TOPIC, "what-is-tvl"); assert.equal(e.NEWS_GIT_SYNC, "false");
-  assert.equal(e.AI_PROVIDER_ORDER, "ollama,groq,openrouter,gemini");
+  assert.equal(e.AI_PROVIDER_ORDER, undefined);
 });
 
 test("buildRunEnv: a .env DRY_RUN=true survives --live only if you pass it explicitly", () => {

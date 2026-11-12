@@ -25,7 +25,7 @@ function world(seedPosted = []) {
   sh(root, "clone", "-q", bare, seed);
   // v11.1: post.mjs imports cards.mjs, research.mjs (v11) AND alerts.mjs,
   // article.mjs (restored v10.2), so a real run needs all of them.
-  for (const f of ["post.mjs", "news.mjs", "news-sync.mjs", "telegram.mjs", "alerts.mjs", "article.mjs", "cards.mjs", "research.mjs"]) fs.copyFileSync(path.join(ROOT, f), path.join(seed, f));
+  for (const f of ["post.mjs", "news.mjs", "news-sync.mjs", "telegram.mjs", "alerts.mjs", "article.mjs", "style.mjs", "cards.mjs", "research.mjs"]) fs.copyFileSync(path.join(ROOT, f), path.join(seed, f));
   fs.mkdirSync(path.join(seed, "news-state"));
   fs.writeFileSync(path.join(seed, "news-state/posted.json"), JSON.stringify({ posted: seedPosted }) + "\n");
   const id = ["-c", "user.name=t", "-c", "user.email=t@t"];
@@ -36,7 +36,7 @@ function world(seedPosted = []) {
 }
 function run(cwd, mocklog, mode, extra = {}) {
   return new Promise((resolve) => {
-    const env = { PATH: process.env.PATH, HOME: os.homedir(), RUN_MODE: mode, BINANCE_SQUARE_OPENAPI_KEY: "x", GROQ_API_KEY: "x", NEWS_GIT_SYNC: "true", MOCK_LOG: mocklog, ...extra };
+    const env = { PATH: process.env.PATH, HOME: os.homedir(), RUN_MODE: mode, ...(mode === "alerts" ? { MOCK_BTC: "82700" } : {}), BINANCE_SQUARE_OPENAPI_KEY: "x", GROQ_API_KEY: "x", NEWS_GIT_SYNC: "true", MOCK_LOG: mocklog, ...extra };
     const p = spawn(process.execPath, ["--import", MOCK, "post.mjs"], { cwd, env });
     let out = ""; p.stdout.on("data", (d) => (out += d)); p.stderr.on("data", (d) => (out += d));
     p.on("close", (code) => resolve({ code, out }));
@@ -45,7 +45,7 @@ function run(cwd, mocklog, mode, extra = {}) {
 const lines = (w, prefix) => (fs.existsSync(w.mocklog) ? fs.readFileSync(w.mocklog, "utf8").split("\n").filter((l) => l.startsWith(prefix)) : []);
 const posts = (w) => lines(w, "SQUARE ");
 
-const GOOD_ALERT = "HEADLINE: Bitcoin drops below $83,000 and now trades at $82,950\nCONTEXT: It is down 1.2% over the past 24 hours.";
+const GOOD_ALERT = "HEADLINE: Bitcoin drops below $83,000 and now trades at $82,700\nCONTEXT: It is down 1.2% over the past 24 hours.";
 
 test("alerts 1: a quiet level cross posts once, text-only, with AI text, disclaimer and one cashtag; a rerun does not repost", { skip: !hasGit, timeout: 120000 }, async () => {
   const w = world(); const pc = w.clone("pc");
@@ -53,7 +53,7 @@ test("alerts 1: a quiet level cross posts once, text-only, with AI text, disclai
   check("exit 0", r.code === 0, r.out.slice(-700));
   check("exactly one Square post", posts(w).length === 1, `got ${posts(w).length}\n${r.out.slice(-700)}`);
   const text = JSON.parse(posts(w)[0].slice(7));
-  check("AI headline used", text.includes("🔻 Bitcoin drops below $83,000 and now trades at $82,950"), text);
+  check("AI headline used", text.includes("🔻 Bitcoin drops below $83,000 and now trades at $82,700"), text);
   check("one cashtag, hashtags ≤2", (text.match(/\$[A-Z]{2,6}\b/g) || []).length === 1 && (text.match(/#\w+/g) || []).length <= 2 && /\$BTC #Bitcoin/.test(text), text);
   check("has a disclaimer line", /advice|DYOR|research/i.test(text), text);
   check("no image on a quiet level cross (images are for extreme moves)", lines(w, "IMAGELIST").length === 0, r.out.slice(-500));
@@ -94,11 +94,11 @@ test("alerts 3: quiet market posts nothing", { skip: !hasGit, timeout: 60000 }, 
 
 test("alerts 4: an AI answer with an invented number is rejected and the data template is posted", { skip: !hasGit, timeout: 60000 }, async () => {
   const w = world(); const pc = w.clone("pc");
-  const r = await run(pc, w.mocklog, "alerts", { MOCK_AI_TEXT: "HEADLINE: Bitcoin drops below $83,000 and now trades at $82,950\nCONTEXT: Analysts target $90,000 soon." });
+  const r = await run(pc, w.mocklog, "alerts", { MOCK_AI_TEXT: "HEADLINE: Bitcoin drops below $83,000 and now trades at $82,700\nCONTEXT: Analysts target $90,000 soon." });
   check("exit 0", r.code === 0, r.out.slice(-500));
   check("rejected then template", /rejected/.test(r.out) && posts(w).length === 1, r.out.slice(-600));
   const text = JSON.parse(posts(w)[0].slice(7));
-  check("template headline posted", text.includes("Bitcoin falls below $83,000, now trading at $82,950") && !text.includes("90,000"), text);
+  check("template headline posted", text.includes("Bitcoin falls below $83,000, now trading at $82,700") && !text.includes("90,000"), text);
 });
 
 test("alerts 5: Telegram approval — reject posts nothing and marks skipped; approve posts", { skip: !hasGit, timeout: 120000 }, async () => {
@@ -190,4 +190,54 @@ test("weekly 3: no Telegram => refuses (nothing is ever published unapproved); d
   w = world(SEEDED); pc = w.clone("pc");
   r = await run(pc, w.mocklog, "weekly-approve", { MOCK_AI_TEXT: ARTICLE, DRY_RUN: "true", ...TG });
   check("dry run: nothing sent or posted, draft saved", r.code === 0 && posts(w).length === 0 && lines(w, "telegram").length === 0 && fs.existsSync(path.join(pc, "weekly-draft.json")), r.out.slice(-600));
+});
+
+// ---------------- v11.5 (Stage 2): price cross-check, context line, no chatter ----------------
+
+test("alerts 7: the two price sources agree -> the alert posts and says so", { skip: !hasGit, timeout: 120000 }, async () => {
+  const w = world(); const pc = w.clone("pc");
+  const r = await run(pc, w.mocklog, "alerts", { MOCK_AI_TEXT: GOOD_ALERT });
+  check("posted once", r.code === 0 && posts(w).length === 1, r.out.slice(-600));
+  check("log shows the cross-check", /Price check: Binance \$82,700 vs CoinGecko \$82,700 \(0\.00% apart\)/.test(r.out), r.out.slice(-800));
+});
+
+test("alerts 8: sources disagree by more than 2% -> held: nothing claimed, nothing posted", { skip: !hasGit, timeout: 120000 }, async () => {
+  const w = world(); const pc = w.clone("pc");
+  const r = await run(pc, w.mocklog, "alerts", { MOCK_AI_TEXT: GOOD_ALERT, MOCK_CG_BTC: "70000" });
+  check("exit 0, no post", r.code === 0 && posts(w).length === 0, r.out.slice(-600));
+  check("says why", /Holding this alert: the two price sources disagree by more than 2%/.test(r.out), r.out.slice(-600));
+  const st = w.remoteAlerts();
+  check("no claim was written to the shared state", !st || st.fired.length === 0, JSON.stringify(st));
+  const relaxed = await run(pc, w.mocklog, "alerts", { MOCK_AI_TEXT: GOOD_ALERT, MOCK_CG_BTC: "70000", ALERT_PRICE_TOLERANCE_PCT: "25" });
+  check("a wider tolerance lets it through", relaxed.code === 0 && posts(w).length === 1, relaxed.out.slice(-600));
+});
+
+test("alerts 9: second source down or switched off -> still posts, says it was unchecked", { skip: !hasGit, timeout: 120000 }, async () => {
+  let w = world(); let pc = w.clone("pc");
+  let r = await run(pc, w.mocklog, "alerts", { MOCK_AI_TEXT: GOOD_ALERT, MOCK_CG_PRICE: "fail" });
+  check("CoinGecko down: posted", r.code === 0 && posts(w).length === 1 && /not cross-checked/.test(r.out), r.out.slice(-600));
+  w = world(); pc = w.clone("pc");
+  r = await run(pc, w.mocklog, "alerts", { MOCK_AI_TEXT: GOOD_ALERT, MOCK_CG_BTC: "70000", ALERT_PRICE_CHECK: "off" });
+  check("ALERT_PRICE_CHECK=off: posted despite the gap", r.code === 0 && posts(w).length === 1 && /ALERT_PRICE_CHECK=off/.test(r.out), r.out.slice(-600));
+});
+
+test("alerts 10: a week of hourly candles adds 'lowest since' to the post; ALERT_CONTEXT=off removes it", { skip: !hasGit, timeout: 120000 }, async () => {
+  let w = world(); let pc = w.clone("pc");
+  let r = await run(pc, w.mocklog, "alerts", { MOCK_HISTORY: "low", GROQ_API_KEY: "" });
+  check("posted using the template (no AI key)", r.code === 0 && posts(w).length === 1, r.out.slice(-600));
+  const text = JSON.parse(posts(w)[0].slice(7));
+  check("post says lowest since <date>", /Lowest since [A-Z][a-z]+\.? \d{1,2}; 24h change/.test(text), text);
+  check("log shows the context", /Context: lowest since /.test(r.out), r.out.slice(-600));
+  w = world(); pc = w.clone("pc");
+  r = await run(pc, w.mocklog, "alerts", { MOCK_HISTORY: "low", GROQ_API_KEY: "", ALERT_CONTEXT: "off" });
+  const plain = JSON.parse(posts(w)[0].slice(7));
+  check("ALERT_CONTEXT=off: no context line", !/Lowest since/.test(plain), plain);
+});
+
+test("alerts 11: the BNB-style chatter (a cent past the level) posts nothing", { skip: !hasGit, timeout: 120000 }, async () => {
+  const w = world(); const pc = w.clone("pc");
+  const r = await run(pc, w.mocklog, "alerts", { MOCK_AI_TEXT: GOOD_ALERT, MOCK_BTC: "82980", MOCK_BTC_START: "83010", MOCK_BTC_CHG: "-0.3" });
+  check("quiet: no post", r.code === 0 && posts(w).length === 0, r.out.slice(-500));
+  const loose = await run(pc, w.mocklog, "alerts", { MOCK_AI_TEXT: GOOD_ALERT, MOCK_BTC: "82980", MOCK_BTC_START: "83010", MOCK_BTC_CHG: "-0.3", ALERT_LEVEL_MARGIN_PCT: "0" });
+  check("with the margin at 0 the old chatter alert comes back", loose.code === 0 && posts(w).length === 1, loose.out.slice(-500));
 });

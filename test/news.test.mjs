@@ -3,7 +3,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import {
-  parseExtraFeeds, decodeEntities, cleanText, parseFeed, detectCoins, titleTokens, sameStory,
+  parseExtraFeeds, filterFeedsOff, decodeEntities, cleanText, parseFeed, detectCoins, titleTokens, sameStory,
   isJunkTitle, filterFreshNews, clusterStories, scoreStory, emptyNewsState, normalizeNewsState,
   pruneNewsState, dailyCount, recordPosted, isAlreadyPosted, pickNewsStory, buildNewsPrompt,
   parseNewsAiOutput, extractQuantities, validateNewsCopy, truncateAtWord, buildNewsTemplate,
@@ -84,6 +84,13 @@ describe("feed parsing", () => {
   test("an item with an unparseable date gets publishedAt null", () => {
     const [i] = parseFeed("<rss><item><title>Some long enough title here</title><pubDate>nope</pubDate></item></rss>", "x");
     assert.equal(i.publishedAt, null);
+  });
+
+  test("filterFeedsOff drops feeds by name, case-insensitively, ignoring unknown names", () => {
+    const feeds = [{ name: "CoinDesk" }, { name: "CryptoSlate" }, { name: "The Block" }];
+    assert.deepEqual(filterFeedsOff(feeds, " cryptoslate , Nope ").map((f) => f.name), ["CoinDesk", "The Block"]);
+    assert.equal(filterFeedsOff(feeds, "").length, 3);
+    assert.equal(filterFeedsOff(feeds, undefined).length, 3);
   });
 
   test("parseExtraFeeds accepts Name|https URLs only", () => {

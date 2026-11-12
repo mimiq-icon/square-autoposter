@@ -222,7 +222,7 @@ describe("pickHashtags / appendHashtags", () => {
 // ---------------------------------------------------------------------------
 describe("isSafeAiText — the compliance gate", () => {
   const ALLOWED = ["BTC", "ETH"];
-  const GOOD = "$BTC is holding near $67,234 while $ETH climbs 1.2% today. Which one are you watching? Not financial advice. DYOR.";
+  const GOOD = "$BTC is holding near $67,234 while $ETH climbs 1.2% today, and the 24h range for $BTC is narrow. Not financial advice.";
 
   test("accepts a well-formed post", () => {
     assert.deepEqual(isSafeAiText(GOOD, ALLOWED), { ok: true });
@@ -327,9 +327,8 @@ describe("isSafeAiText — the compliance gate", () => {
 
   test("accepts any of the rotated disclaimer variants", () => {
     const variants = [
-      "Not financial advice. DYOR.",
-      "NFA. Always DYOR.",
-      "Not financial advice — do your own research.",
+      "Not financial advice.",
+      "Not financial advice. Do your own research.",
     ];
     for (const variant of variants) {
       const text = `$BTC is holding steady near $67,234 while $ETH climbs roughly 1.2% higher across an otherwise quiet session today. ${variant}`;

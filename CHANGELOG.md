@@ -2,11 +2,24 @@
 
 Reconstructed from the version-tagged comments already in `post.mjs` and `scan.mjs` (every change in this codebase has always been commented in place with a `vN` marker) plus this pass's own work. If you're looking for *why* a particular line exists, search the source for its version tag first — the reasoning usually lives right there.
 
+## v11.10 (operating-loop pass: the live path, the packaging, the fallback)
+
+This pass did not add a format. It closed the gaps `STRATEGY.md` itself named, and fixed the things the last uploaded snapshot broke.
+
+- **The hourly GitHub news runner now actually asks you first.** The repo secrets existed, but `news-post.yml` never passed `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` to the job, so `telegramConfigured()` was false there and sensitive stories posted without the tap `STRATEGY.md` assumed they got. Both are now passed. `alert-post.yml` gets the same two lines.
+- **Research no longer goes dark when no AI is available.** Every other writer had a template fallback; the research desk instead skipped the topic (`No validated AI copy — skipping this topic`), which is what the last dry run showed. `buildResearchTemplateCopies()` now builds a copy from the vetted concept notes (education topics) or the fetched fact text (data topics), the caller validates each candidate and uses the first that passes. `provider` is reported as `template`, the article drops its "idea, step by step" section when the copy already carries the notes, and a concept-notes-only post credits no source it did not use.
+- **Two topics could never publish.** `wiki:Total value locked` and `wiki:Layer 2 (blockchain)` both return HTTP 404 from Wikipedia, so `what-is-tvl` and `what-is-a-layer-2` failed their two-source minimum on every run forever. TVL now points at the live "Decentralized finance" article; layer 2 is an explicit `notesOnly` explainer (no live source, concept notes only) instead of being grounded in a page that does not exist. The topic test now enforces "a live source, unless notesOnly with real notes".
+- **The duplicate test files are gone.** The last upload put 22 copies of `test/*.test.mjs` in the repo root with the `../` imports stripped; `node --test` discovered both sets and every root copy failed to import, turning the suite red (42 failures, 0 real). Deleted, plus the stray `test/tests.yml`. `check-sync.mjs` and `run-mode.mjs` were also missing from the test workflow's path filter.
+- **Generated output is untracked.** `card-previews/` (16 files) and `weekly-draft.json` are in `.gitignore` and out of the index. Tracking them made `check-sync` report "MODIFIED: same commit as GitHub, but code files differ" after every dry run.
+- **`save-and-push.bat`** commits and pushes from the PC, so a change does not have to travel as a zip through the GitHub web UI (which is how the folder got flattened in the first place).
+- 521 tests (was 518): every topic must produce a mechanical copy that passes the grounding validator, the copy must be declarative and dash-free, and a short interrogative title must still get a valid hook.
+
 ## v11.9 (Stage 4b of the quality rebuild: the strategy pass)
 
 - **`STRATEGY.md` (new):** a review of the whole desk using your master-prompt frame (strategist, operator, quality reviewer, real limits): what "better" means, the real constraints, what each stage found, ideas ranked by impact and effort, what was deliberately not built and why, and a 30-day plan. Its top recommendation: make the unattended GitHub hourly news workflow ask for approval (add the two Telegram secrets) or disable it, since it is the one path where a plain-template post can go out unseen.
 - **A weekly short DATA post.** Research topics (the data ones) used to appear once a month, as the long article, while two explainers went out every week. The Friday run now publishes a short post from a research topic with a ranked-bar chart of its own numbers; Tuesday stays an explainer and the first Saturday stays the long article. `RESEARCH_DATA_DAY` sets the weekday (`mon`..`fri`, or `off`; Saturday is refused because it is the article's day). `RESEARCH_MODE=data` forces one; a forced research topic with no mode is still the long article. The Telegram preview calls the image "Chart for this post".
 - 518 tests (was 512): the weekday parser, and two end-to-end runs (data mode makes a short chart post; without it a forced research topic is still the article).
+
 
 ## v11.8 (Stage 4a of the quality rebuild: more data, real charts)
 

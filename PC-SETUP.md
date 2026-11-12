@@ -2,7 +2,7 @@
 
 Your Windows 11 PC (i5-8365U, 8 GB RAM, no GPU) is plenty for this. The PC checks the news feeds every ~2.5 minutes and writes posts with a small local AI model. GitHub keeps running hourly in the background, so **the PC does not need to be on 24/7**; when it's off or asleep, GitHub carries on.
 
-Before you start, you need these in the repo (upload the current files to GitHub and commit; see CHANGELOG.md for what each version added): `post.mjs`, `news.mjs`, `cards.mjs`, `research.mjs`, `alerts.mjs`, `article.mjs`, `style.mjs`, `news-sync.mjs`, `telegram.mjs`, `local-runner.mjs`, `check-sync.mjs`, `run-mode.mjs`, `make-avatar.mjs`, `preview-cards.mjs`, `brand/` (logo and bundled fonts), `test-support/`, `start-news.bat`, `check-sync.bat`, `dry-run-all.bat`, `dry-run-all.ps1`, `.env.example`, `.gitignore`, and the `.github/workflows/` folder.
+Before you start, you need these in the repo (upload the current files to GitHub and commit; see CHANGELOG.md for what each version added): `post.mjs`, `news.mjs`, `cards.mjs`, `research.mjs`, `alerts.mjs`, `article.mjs`, `style.mjs`, `news-sync.mjs`, `telegram.mjs`, `local-runner.mjs`, `check-sync.mjs`, `run-mode.mjs`, `make-avatar.mjs`, `preview-cards.mjs`, `brand/` (logo and bundled fonts), `test-support/`, `start-news.bat`, `check-sync.bat`, `save-and-push.bat`, `dry-run-all.bat`, `dry-run-all.ps1`, `scorecard.csv`, `.env.example`, `.gitignore`, and the `.github/workflows/` folder.
 
 The PC runner also checks prices for **alerts** ("Bitcoin falls below $83,000") in the same cycle, and every alert can wait for your Telegram tap (set the `TELEGRAM_*` values in `.env`; `ALERT_APPROVAL=off` posts them automatically). If a coin just moved sharply, that cycle takes a few seconds longer.
 
@@ -112,6 +112,8 @@ Before publishing, each runner records a "claim" on the story in `news-state/pos
 If the PC can't reach GitHub when it starts a cycle, it **doesn't post** rather than risk a duplicate.
 
 ## Is this PC up to date with GitHub?
+
+Double-click **`save-and-push.bat`** to commit and push this folder's changes. Prefer it to uploading a zip through GitHub's web page: the web uploader flattens folders, which is how 22 duplicate test files once landed in the repo root and broke the suite.
 
 Double-click **`check-sync.bat`** (or run `node check-sync.mjs`). It fetches GitHub's `main` and compares the *code* (the bot's own `news-state/` and `logs/` files are ignored because they change all day by design). You get one of:
 

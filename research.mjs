@@ -491,7 +491,10 @@ export const RESEARCH_TOPICS = [
     kind: "education",
     kicker: "EXPLAINER",
     title: "What is total value locked (TVL)?",
-    needs: ["wiki:Total value locked", "defillama-protocols"],
+    // There is no Wikipedia article called "Total value locked" (the summary
+    // API 404s), so this topic could never meet its two-source minimum and was
+    // silently never published. The DeFi article covers TVL.
+    needs: ["wiki:Decentralized finance", "defillama-protocols"],
     tags: ["#DeFi"],
     defs: [
       "TVL is the total value of assets deposited in a protocol, priced in USD at current market rates.",
@@ -582,7 +585,14 @@ export const RESEARCH_TOPICS = [
     kind: "education",
     kicker: "EXPLAINER",
     title: "What is a layer 2?",
-    needs: ["wiki:Layer 2 (blockchain)"],
+    // "Layer 2 (blockchain)" does not exist on Wikipedia either, and the pages
+    // that do exist ("Layer-1 blockchain", "Rollup") are the wrong concept or
+    // the wrong sense of the word. Rather than ground the explainer in a
+    // misleading fact, this one is concept notes only: it is a definition post
+    // by design and can always be published. It declares no need, which is the
+    // one explicit exception to "every topic has a data source".
+    needs: [],
+    notesOnly: true,
     tags: ["#Ethereum"],
     defs: [
       "A layer 2 runs transactions on a separate chain and settles summaries back to the main chain (layer 1), inheriting its security.",
@@ -855,11 +865,80 @@ export function assembleResearchPost({ copy, topic, disclaimer = "Not financial 
     lines.push(copy.question);
   }
   const sources = (topic.sources || []).slice(0, 3);
-  lines.push("", `Data: ${sources.length ? sources.join(", ") : "public data"}`);
+  // A concept-notes-only explainer has no data to credit; claiming "public
+  // data" would be a small lie on a post whose whole point is being grounded.
+  if (sources.length) lines.push("", `Data: ${sources.join(", ")}`);
   lines.push(disclaimer);
   const tags = (topic.tags || []).slice(0, 2).join(" ");
   if (tags) lines.push(tags);
   return lines.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Mechanical fallback copy.
+//
+// When no AI provider is configured (a fresh clone, a PC with no keys, an
+// outage) or every answer fails validation, the desk used to skip the topic
+// entirely. That made the research line dependent on a free tier that is the
+// most fragile part of the system. These candidates are built only from the
+// vetted concept notes and the fetched fact text, so every figure in them is
+// grounded by construction. They are plainer than the model's copy on purpose;
+// the caller validates each candidate and uses the first that passes.
+// ---------------------------------------------------------------------------
+const plainPunct = (s) => String(s || "")
+  .replace(/\s*[\u2014\u2013]\s*/g, "; ")
+  .replace(/\s+/g, " ")
+  .trim();
+
+// Cut at a sentence/clause boundary so a long fact block never ends mid-word.
+function trimToBoundary(text, max) {
+  const t = plainPunct(text);
+  if (t.length <= max) return t;
+  const cut = t.slice(0, max);
+  const stop = Math.max(cut.lastIndexOf(". "), cut.lastIndexOf("; "), cut.lastIndexOf(", "));
+  const out = (stop > max * 0.5 ? cut.slice(0, stop + 1) : cut).trim();
+  return out.replace(/[,;]$/, "").trim();
+}
+
+export function buildResearchTemplateCopies(topic, facts) {
+  const defs = (topic.defs || []).map(plainPunct).filter(Boolean);
+  const blocks = (facts?.blocks || [])
+    .filter((b) => b.text && !b.internal)
+    .map((b) => plainPunct(b.text))
+    .filter(Boolean);
+
+  // A hook is 20-100 characters and may not ask a question (the voice rules
+  // forbid it), so a short or interrogative title is made declarative.
+  const title = plainPunct(topic.title).replace(/[?]+$/, "").trim();
+  const hook = title.length < 20 ? `${title} and why it matters` : title;
+  if (hook.length < 20) return [];
+
+  const NEUTRAL_TAKEAWAY = "The figures are a snapshot from public data and change daily.";
+  const candidates = [];
+
+  if (defs.length >= 2) {
+    // Concept notes first, the last one as the takeaway: these are the vetted
+    // definitions, so the explanation never depends on a model.
+    candidates.push({
+      hook,
+      body: trimToBoundary(defs.slice(0, -1).join(" "), 600),
+      takeaway: trimToBoundary(defs[defs.length - 1], 200),
+      fromNotes: true,
+    });
+  }
+  if (blocks.length) {
+    // Data topics have no concept notes: report the fetched lines themselves,
+    // which is what the chart beside them shows.
+    candidates.push({
+      hook,
+      body: trimToBoundary(blocks.join(" "), 600),
+      takeaway: NEUTRAL_TAKEAWAY,
+    });
+  }
+  if (defs.length === 1) {
+    candidates.push({ hook, body: trimToBoundary(defs[0], 600), takeaway: NEUTRAL_TAKEAWAY, fromNotes: true });
+  }
+  return candidates;
 }
 
 // Monthly long-form: sections are assembled mechanically from the facts (so
@@ -870,8 +949,13 @@ export function buildResearchArticleMarkdown({ topic, facts, copy, shares = [] }
   const parts = [];
   parts.push(`# ${topic.title}`);
   parts.push("");
-  parts.push(copy.hook);
-  parts.push("");
+  // A mechanical fallback hook is the title itself; printing it again as a
+  // lede reads like a mistake. A model's hook is a real sentence and stays.
+  const hook = plainPunct(copy.hook);
+  if (hook && hook.toLowerCase() !== plainPunct(topic.title).toLowerCase()) {
+    parts.push(hook);
+    parts.push("");
+  }
   parts.push(copy.body);
   parts.push("");
   parts.push(`## The numbers today`);

@@ -98,12 +98,13 @@ jobs:
           # --- Optional tuning (uncomment to change) ---
           # NEWS_MIN_GAP_MIN: '5'         # minimum minutes between posts, shared with the PC
           #
-          # Human approval over Telegram. By default the PC owns approvals; if
-          # you add these here too, sensitive stories on this runner also ask you
-          # first (it then waits up to NEWS_APPROVAL_WAIT_MIN, using Actions minutes).
-          # Without them, sensitive stories still need 2 outlets before posting.
-          # TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          # TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          # Human approval over Telegram. These are ON: the repo secrets exist,
+          # and without passing them here this runner could not see them, so it
+          # posted sensitive stories without asking. With them set, NEWS_APPROVAL
+          # defaults to 'sensitive' and this runner asks you first (it then waits
+          # up to NEWS_APPROVAL_WAIT_MIN, using Actions minutes).
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           # NEWS_MAX_PER_DAY: '40'        # hard daily cap (default 40). Binance allows 100 API posts/day in total, shared by every post type
           # NEWS_MAX_AGE_HOURS: '6'       # ignore stories older than this
           # NEWS_REQUIRE_AI: 'true'       # skip a story rather than post the plain-headline fallback

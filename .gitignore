@@ -9,3 +9,10 @@ logs/
 
 node_modules/
 *.log
+
+# Generated output — never commit it.
+# card-previews/ is drawn by `node preview-cards.mjs`; committing it made every
+# dry run look like a local code edit to check-sync.
+card-previews/
+# Written by RUN_MODE=weekly-draft and uploaded as a workflow artifact instead.
+weekly-draft.json

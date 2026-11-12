@@ -4,6 +4,7 @@ import {
   parseStablecoins, describeStablecoins, parseChains, describeChains, parseProtocolFees, describeProtocolFees,
   parseDifficulty, describeDifficulty, parseTipHeight, bitcoinSupplyAt, describeSupply, parsePools, describePools,
   gatherFacts, researchChartFor, minSourcesFor, needFamily, RESEARCH_TOPICS,
+  buildResearchTemplateCopies, validateResearchCopy,
 } from "../research.mjs";
 import { buildRankedBarsSvg } from "../cards.mjs";
 import { lintStyle } from "../style.mjs";
@@ -153,6 +154,33 @@ describe("every research topic gathers, meets its minimum, and builds a valid ch
       }
     });
   }
+  test("every topic can still publish with no AI at all (mechanical copy)", async () => {
+    for (const topic of RESEARCH_TOPICS) {
+      const facts = await gatherFacts(topic, { fetchFn: route(NOW), retries: 0, nowMs: NOW });
+      const candidates = buildResearchTemplateCopies(topic, facts);
+      assert.ok(candidates.length, `${topic.id}: no template candidate`);
+      const ok = candidates.find((c) => validateResearchCopy(c, { factsText: facts.factsText }).ok);
+      assert.ok(ok, `${topic.id}: no candidate passed (${candidates.map((c) => validateResearchCopy(c, { factsText: facts.factsText }).reason).join(" | ")})`);
+      assert.ok(!/[\u2014\u2013]/.test(ok.hook + ok.body + ok.takeaway), `${topic.id}: template copy keeps a dash flourish`);
+    }
+  });
+
+  test("the mechanical copy is grounded, declarative and names no extra coin", async () => {
+    const topic = RESEARCH_TOPICS.find((t) => t.id === "what-is-tvl");
+    const facts = await gatherFacts(topic, { fetchFn: route(NOW), retries: 0, nowMs: NOW });
+    const copy = buildResearchTemplateCopies(topic, facts)[0];
+    assert.equal(validateResearchCopy(copy, { factsText: facts.factsText }).ok, true);
+    assert.ok(!copy.hook.includes("?"));
+    assert.ok(copy.body.length >= 40 && copy.body.length <= 600);
+  });
+
+  test("a short interrogative title still gets a valid declarative hook", () => {
+    const topic = { ...RESEARCH_TOPICS.find((t) => t.id === "what-is-a-layer-2") };
+    const [copy] = buildResearchTemplateCopies(topic, { blocks: [] });
+    assert.ok(copy.hook.length >= 20 && copy.hook.length <= 100);
+    assert.ok(!copy.hook.includes("?"));
+  });
+
   test("a topic's chartNeed picks its own chart", async () => {
     const topic = RESEARCH_TOPICS.find((t) => t.id === "where-defi-lives");
     const facts = await gatherFacts(topic, { fetchFn: route(NOW), retries: 0, nowMs: NOW });

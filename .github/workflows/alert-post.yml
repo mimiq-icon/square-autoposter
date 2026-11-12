@@ -72,6 +72,6 @@ jobs:
           # ALERT_CHART: 'off'             # no card/chart image
           # ALERT_CHART_HOURS: '24'        # price window on the alert card (default: the day's range)
           # ALERT_APPROVAL: 'all'          # needs the two Telegram secrets
-          # TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          # TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: node post.mjs

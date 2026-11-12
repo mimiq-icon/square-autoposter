@@ -154,7 +154,12 @@ describe("topic engine", () => {
 
   test("every topic declares needs, tags and a title", () => {
     for (const t of RESEARCH_TOPICS) {
-      assert.ok(t.id && t.title && Array.isArray(t.needs) && t.needs.length > 0, t.id);
+      assert.ok(t.id && t.title && Array.isArray(t.needs), t.id);
+      // A topic needs a live data source, with one explicit exception: a
+      // definition post may be concept notes only (notesOnly), and then it must
+      // actually carry the notes that make it publishable.
+      if (t.notesOnly) assert.ok(t.defs?.length >= 2, `${t.id}: notesOnly needs defs`);
+      else assert.ok(t.needs.length > 0, `${t.id}: needs a data source`);
       assert.ok(Array.isArray(t.tags), t.id);
       assert.ok(t.kind === "education" || t.kind === "research", t.id);
     }

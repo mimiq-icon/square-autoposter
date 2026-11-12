@@ -115,7 +115,7 @@ import {
 } from "./cards.mjs";
 import {
   RESEARCH_TOPICS, pickResearchTopic, parseDataDay, gatherFacts, researchChartFor, minSourcesFor, needFamily as needFamilyName, buildResearchPrompt,
-  parseResearchAiOutput, validateResearchCopy, assembleResearchPost,
+  parseResearchAiOutput, validateResearchCopy, assembleResearchPost, buildResearchTemplateCopies,
   buildResearchArticleMarkdown, computeDexShares, isFirstSaturday,
 } from "./research.mjs";
 // v10.2 (restored in v11.1): price alerts and the AI-written weekly article.
@@ -3349,7 +3349,20 @@ async function runResearchMode() {
     if (ai) { copy = ai.copy; provider = ai.provider; }
   }
   if (!copy) {
-    console.log(`  No validated AI copy — skipping this topic rather than posting an ungrounded or unwritten piece.`);
+    // No AI answer (no provider, an outage, or every answer failed the
+    // validators). The topic still gets published from the vetted concept
+    // notes and the fetched fact text, so the desk does not go dark when a
+    // free tier does.
+    const candidates = buildResearchTemplateCopies(topic, facts);
+    for (const candidate of candidates) {
+      const check = validateResearchCopy(candidate, { factsText: facts.factsText });
+      if (check.ok) { copy = candidate; provider = "template"; break; }
+      console.log(`    template copy rejected (${check.reason}) — trying a plainer one`);
+    }
+  }
+  if (copy && provider === "template") console.log(`  Using the data template (no validated AI copy).`);
+  if (!copy) {
+    console.log(`  No usable copy — skipping this topic rather than posting an ungrounded or unwritten piece.`);
     if (!dry) {
       const s2 = loadResearchStateFile(stateFile);
       saveResearchStateFile(stateFile, { ...s2, recent: [...s2.recent.filter((id) => id !== topic.id), topic.id].slice(-RESEARCH_MEMORY) });
@@ -3359,10 +3372,16 @@ async function runResearchMode() {
   }
 
   // ---- 4. build the pieces (short post or monthly article) ----
-  const postText = assembleResearchPost({ copy, topic });
+  // A mechanical copy built from the concept notes uses no fetched source, so
+  // it must not credit one. A copy built from the fact blocks does use them.
+  const creditTopic = provider === "template" && copy.fromNotes ? { ...topic, sources: [] } : topic;
+  const postText = assembleResearchPost({ copy, topic: creditTopic });
   const dexShares = topic.needs?.includes("defillama-dexs") ? computeDexShares(dexOverviewFromFacts(facts)) : [];
   const articleBody = kind === "research-article"
-    ? buildResearchArticleMarkdown({ topic, facts, copy, shares: dexShares })
+    // The template copy already carries the concept notes in its body and
+    // takeaway, so the "idea, step by step" section would repeat them three
+    // times. A model's copy does not, so it keeps the section.
+    ? buildResearchArticleMarkdown({ topic: provider === "template" ? { ...topic, defs: [] } : topic, facts, copy, shares: dexShares })
     : null;
   const articleTitle = kind === "research-article" ? `${topic.title} — ${now.toISOString().slice(0, 10)}` : null;
 

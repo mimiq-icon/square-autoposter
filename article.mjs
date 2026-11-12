@@ -47,6 +47,8 @@ export function buildArticleFacts({ weekRange, globalMarket, fng, watchlist = []
   return lines.join("\n");
 }
 
+import { STYLE_GUIDE } from "./style.mjs";
+
 export function buildArticlePrompt(facts) {
   return [
     "You are the editor of a weekly crypto market recap published on Binance Square. Write the article from the FACTS below.",
@@ -63,6 +65,8 @@ export function buildArticlePrompt(facts) {
     "## The majors   (what moved this week and by how much, using WATCHLIST and NOTABLE MOVES; a short bullet list is fine)",
     "## Stories that shaped the week   (only if NEWS lines exist: 3-5 sentences, each story attributed to its publisher by name; otherwise skip this section)",
     "## Reading the data   (2-3 sentences on what the figures do and do not show; no forecasts)",
+    "",
+    ...STYLE_GUIDE,
     "",
     "Rules:",
     "- Use ONLY the facts above. Copy figures exactly as written; never round, convert or invent numbers, names, dates or quotes.",

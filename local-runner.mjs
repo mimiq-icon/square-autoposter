@@ -151,8 +151,9 @@ export function buildChildEnv(baseEnv, { dryRun = false, gitOk = true, mode = "n
   const env = { ...baseEnv, RUN_MODE: mode };
   env.NEWS_GIT_SYNC = env.NEWS_GIT_SYNC || (gitOk ? "true" : "false");
   env.NEWS_FEED_CACHE_FILE = env.NEWS_FEED_CACHE_FILE || path.join(".cache", "news-feeds.json");
-  // Local model first on the PC; cloud providers remain as fallbacks.
-  if (!env.AI_PROVIDER_ORDER && env.OLLAMA_MODEL) env.AI_PROVIDER_ORDER = "ollama,groq,openrouter,gemini";
+  // v11.5: cloud models first, Ollama last. A 3B model on a laptop wrote the
+  // flattest, most machine-sounding copy; it is now the offline backup only.
+  // Set AI_PROVIDER_ORDER=ollama,groq in .env to put it first again.
   if (dryRun) env.DRY_RUN = "true"; // --dry-run forces it; otherwise a DRY_RUN in .env is respected
   return env;
 }

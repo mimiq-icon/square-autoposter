@@ -320,8 +320,10 @@ export function buildNewsCardSvg({
   }
 
   if (hasSpark) {
-    const chartTop = Math.max(y + 56, 640);
-    const chartH = Math.min(200, H - 130 - 70 - chartTop);
+    // v11.4.1: start the chart higher and let it grow (was fixed at 640 / 200px,
+    // which left a big empty band under short headlines).
+    const chartTop = Math.max(y + 56, 580);
+    const chartH = Math.min(300, H - 130 - 70 - chartTop);
     const chartW = W - PAD * 2;
     if (useCandles) {
       const c = drawCandles({ x: PAD, y: chartTop, w: chartW, h: chartH, candles, volume: false, brand });
@@ -669,6 +671,50 @@ export function buildBarChartSvg({
   });
 
   parts.push(`<line x1="${zeroX}" y1="${top - 10}" x2="${zeroX}" y2="${top + data.length * rowH}" stroke="${brand.border}" stroke-width="1"/>`);
+  parts.push(`<text x="${W - PAD}" y="${H - 40}" text-anchor="end" font-size="14" fill="${brand.muted}">${esc(brand.name)}</text>`);
+  return svgRoot(W, H, parts.join("\n"), brand);
+}
+
+// ---------------------------------------------------------------------------
+// 4b. RANKED BARS (v11.8) — left-aligned bars on a baseline, for shares and
+//     rankings (stablecoin supply, TVL by chain, pool share of blocks). The
+//     leader is full brand yellow, the rest are the same hue, dimmed. Not
+//     green/red: those mean "up/down" and a market share is neither.
+// ---------------------------------------------------------------------------
+export function buildRankedBarsSvg({
+  title,
+  subtitle = "",
+  rows = [],             // [{ label, value, valueText }] biggest first
+  source = "",
+  brand = BRAND,
+}) {
+  const W = 1200, H = 675, PAD = 64;
+  const parts = [];
+  const data = rows.filter((r) => Number.isFinite(Number(r.value)) && Number(r.value) > 0).slice(0, 8);
+  const max = Math.max(1e-9, ...data.map((r) => Number(r.value)));
+
+  parts.push(brandLockup(PAD, 70, brand));
+  const titleLines = wrapText(title, 52, 2);
+  parts.push(titleLines.map((l, i) => `<text x="${PAD}" y="${148 + i * 40}" font-size="34" font-weight="800" fill="${brand.text}">${esc(l)}</text>`).join("\n"));
+  const subY = 148 + titleLines.length * 40 - 6;
+  if (subtitle) parts.push(`<text x="${PAD}" y="${subY + 22}" font-size="18" fill="${brand.muted}">${esc(subtitle)}</text>`);
+
+  const top = subY + 56, bottom = H - 96;
+  const rowH = Math.min(58, (bottom - top) / Math.max(1, data.length));
+  const labelW = 210, barX = PAD + labelW + 12, barMaxW = W - PAD - barX - 150;
+  data.forEach((r, i) => {
+    const y = top + i * rowH;
+    const v = Number(r.value);
+    const w = Math.max(6, (v / max) * barMaxW);
+    const barH = Math.min(30, rowH - 14);
+    const barY = y + (rowH - barH) / 2;
+    parts.push(`<text x="${PAD}" y="${(barY + barH / 2 + 7).toFixed(1)}" font-size="21" font-weight="700" fill="${brand.text}">${esc(String(r.label).slice(0, 17))}</text>`);
+    parts.push(`<rect x="${barX}" y="${barY.toFixed(1)}" width="${w.toFixed(1)}" height="${barH}" rx="4" fill="${brand.accent}" opacity="${i === 0 ? 1 : 0.55}"/>`);
+    const vText = r.valueText != null ? r.valueText : String(v);
+    parts.push(`<text x="${(barX + w + 12).toFixed(1)}" y="${(barY + barH / 2 + 7).toFixed(1)}" font-size="21" font-weight="800" fill="${i === 0 ? brand.accent : brand.text}">${esc(vText)}</text>`);
+  });
+  parts.push(`<line x1="${barX}" y1="${top - 6}" x2="${barX}" y2="${(top + data.length * rowH + 2).toFixed(1)}" stroke="${brand.border}" stroke-width="1"/>`);
+  if (source) parts.push(`<text x="${PAD}" y="${H - 40}" font-size="15" fill="${brand.muted}">${esc(source)}</text>`);
   parts.push(`<text x="${W - PAD}" y="${H - 40}" text-anchor="end" font-size="14" fill="${brand.muted}">${esc(brand.name)}</text>`);
   return svgRoot(W, H, parts.join("\n"), brand);
 }

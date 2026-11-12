@@ -43,6 +43,15 @@ export const NEWS_FEEDS = [
   { name: "Federal Reserve", url: "https://www.federalreserve.gov/feeds/press_all.xml", official: true, filter: MACRO_RELEVANT },
 ];
 
+// v11.4.2: NEWS_FEEDS_OFF="CryptoSlate,The Block" drops feeds by name (case-
+// insensitive) so a feed that refuses one machine (HTTP 403) stops showing up
+// as a failure every cycle. Unknown names are ignored.
+export function filterFeedsOff(feeds, offStr) {
+  const off = new Set(String(offStr || "").split(",").map((x) => x.trim().toLowerCase()).filter(Boolean));
+  if (!off.size) return feeds;
+  return feeds.filter((f) => !off.has(String(f.name).toLowerCase()));
+}
+
 export function parseExtraFeeds(str) {
   if (!str || typeof str !== "string") return [];
   return str
@@ -622,6 +631,8 @@ export function pickNewsStory(
 // ---------------------------------------------------------------------------
 // Writing: prompt, parse, validate, template, assemble
 // ---------------------------------------------------------------------------
+import { lintStyle, STYLE_GUIDE } from "./style.mjs";
+
 export function buildNewsPrompt(cluster) {
   const p = cluster.primary;
   const others = cluster.items.filter((i) => i !== p).slice(0, 2);
@@ -640,9 +651,11 @@ export function buildNewsPrompt(cluster) {
     // the card doesn't have. Four lines, each with its own job:
     "Write exactly four lines:",
     "HEADLINE: one sentence, max 140 characters, present tense, plain words. Say who did what. Rephrase the title in your own words.",
-    "CONTEXT: one short factual sentence (max 160 characters) adding one relevant fact from the summary, or the word NONE. Facts only — no views, estimates or framing.",
+    "CONTEXT: one short factual sentence (max 160 characters) adding one relevant fact from the summary, or the word NONE. Facts only, no views, estimates or framing.",
     "DETAIL: one to two short factual sentences (max 280 characters) from the summary that give a reader the story behind the headline, or the word NONE.",
     "REACTION: one sentence (max 160 characters) that reports a reaction, estimate or opinion ONLY IF the story itself attributes it to a named person, firm or outlet (for example: 'Analyst Min Jung of Presto Labs sees a catch-up trade'), otherwise the word NONE. Never add your own view and never present an opinion as fact.",
+    "",
+    ...STYLE_GUIDE,
     "",
     "Rules:",
     "- Use ONLY facts in the story above. Never add numbers, names, dates, quotes or claims that are not there.",
@@ -706,15 +719,56 @@ function quantitiesGrounded(outText, srcText) {
   return null;
 }
 
+// v11.5: two false rejections fixed. (1) Real headlines and AI output use the
+// curly apostrophe, so "Robinhood\u2019s" was compared as one odd word and
+// failed. (2) A writer who expands an acronym the source uses ("SEC" ->
+// "Securities and Exchange Commission") was told the name wasn't in the
+// source. Known acronym pairs are now treated as grounded in both directions.
+const ACRONYM_EXPANSIONS = {
+  SEC: "securities and exchange commission",
+  CFTC: "commodity futures trading commission",
+  DOJ: "department of justice",
+  IRS: "internal revenue service",
+  FDIC: "federal deposit insurance corporation",
+  FOMC: "federal open market committee",
+  FBI: "federal bureau of investigation",
+  OCC: "office of the comptroller of the currency",
+  ECB: "european central bank",
+  BOJ: "bank of japan",
+  PBOC: "people's bank of china",
+  NYSE: "new york stock exchange",
+  ICE: "intercontinental exchange",
+  DTCC: "depository trust and clearing corporation",
+  FCA: "financial conduct authority",
+  ESMA: "european securities and markets authority",
+  Fed: "federal reserve",
+  US: "united states",
+  UK: "united kingdom",
+  EU: "european union",
+  UN: "united nations",
+};
+
+function normalizeQuotes(s) {
+  return String(s).replace(/[\u2018\u2019\u02bc`]/g, "'");
+}
+
 function ungroundedNames(text, srcText) {
-  const squash = (s) => s.toLowerCase().replace(/\./g, "");
-  const src = squash(srcText);
-  const tokens = text.split(/\s+/);
+  const squash = (s) => normalizeQuotes(s).toLowerCase().replace(/\./g, "");
+  let src = squash(srcText);
+  const rawSrc = normalizeQuotes(srcText);
+  const rawText = normalizeQuotes(text);
+  for (const [acr, expansion] of Object.entries(ACRONYM_EXPANSIONS)) {
+    // the source uses the acronym, so its expansion is grounded...
+    if (new RegExp(`\\b${acr}\\b`).test(rawSrc)) src += " " + expansion;
+    // ...and the source spelling out the expansion grounds the acronym.
+    if (rawSrc.toLowerCase().includes(expansion)) src += " " + acr.toLowerCase();
+  }
+  const tokens = rawText.split(/\s+/);
   const bad = [];
   tokens.forEach((tok, i) => {
     const prev = tokens[i - 1] || "";
     if (i === 0 || /[.!?]$/.test(prev)) return; // sentence-initial capital is not a name signal
-    const w = tok.replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g, "").replace(/'s$/i, "");
+    const w = tok.replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g, "").replace(/'s$/i, "").replace(/'$/, "");
     if (w.length < 3 || !/^[A-Z]/.test(w)) return;
     const lw = squash(w);
     if (COIN_WORDS.has(lw)) return; // coins are verified separately
@@ -769,6 +823,8 @@ export function validateNewsCopy(copy, srcText, bannedPhrases = []) {
     if (banned) return fail(`${label} contains banned phrase "${banned}"`);
     if (PREDICTION.test(text)) return fail(`${label} contains a price prediction`);
     if (ADVICE.test(text)) return fail(`${label} contains trading advice`);
+    const st = lintStyle(text, { kind: "short" });
+    if (!st.ok) return fail(`${label} ${st.reason}`);
 
     const q = quantitiesGrounded(text, srcText);
     if (q) return fail(`${label}: ${q}`);
@@ -806,7 +862,8 @@ export function validateReaction(reaction, srcText, bannedPhrases = []) {
   if (/\banalysts?\b/i.test(reaction)) {
     const owned =
       /\banalysts? (at|of|from)\b/i.test(reaction) ||            // "analysts at Presto"
-      /\b[A-Z][A-Za-z]+ analysts?\b/.test(reaction);              // "Presto analysts"
+      /\b[A-Z][A-Za-z]+ analysts?\b/.test(reaction) ||           // "Presto analysts"
+      /\banalysts? [A-Z][a-z]+ [A-Z][a-z]+/i.test(reaction);       // "Analyst Min Jung" (v11.5: a named person owns the view)
     if (!owned) return fail("'analysts' needs a named firm ('analysts at X') so the view has an owner");
   }
   if (/https?:\/\/|www\./i.test(reaction)) return fail("reaction contains a link");
@@ -814,6 +871,7 @@ export function validateReaction(reaction, srcText, bannedPhrases = []) {
   if (/\p{Extended_Pictographic}/u.test(reaction)) return fail("reaction contains an emoji");
   if (PREDICTION.test(reaction)) return fail("reaction contains a price prediction");
   if (ADVICE.test(reaction)) return fail("reaction contains trading advice");
+  { const st = lintStyle(reaction, { kind: "short" }); if (!st.ok) return fail(`reaction ${st.reason}`); }
   const lower = reaction.toLowerCase();
   const banned = bannedPhrases.find((p) => lower.includes(p));
   if (banned) return fail(`reaction contains banned phrase "${banned}"`);
@@ -834,6 +892,7 @@ export function validateReaction(reaction, srcText, bannedPhrases = []) {
 export function validateGroundedProse(text, srcText, bannedPhrases = []) {
   const fail = (reason) => ({ ok: false, reason, retryable: true });
   if (!text || !text.trim()) return fail("empty text");
+  { const st = lintStyle(text, { kind: "long" }); if (!st.ok) return fail(st.reason); }
   if (/https?:\/\/|www\./i.test(text)) return fail("contains a link");
   if (/\$[A-Za-z]{2,6}\b/.test(text)) return fail("contains a $ cashtag (write coin names in plain words)");
   if (/(^|[^#\n])#[A-Za-z0-9]/.test(text)) return fail("contains a hashtag");
@@ -887,7 +946,6 @@ export function buildNewsTemplate(cluster) {
 export const DEFAULT_NEWS_DISCLAIMER = "Not financial advice.";
 export const NEWS_DISCLAIMER_VARIANTS = [
   "Not financial advice.",
-  "Not financial advice — for information only.",
   "Not financial advice. Do your own research.",
 ];
 export function resolveNewsDisclaimer(value) {

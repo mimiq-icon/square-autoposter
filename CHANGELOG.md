@@ -2,6 +2,64 @@
 
 Reconstructed from the version-tagged comments already in `post.mjs` and `scan.mjs` (every change in this codebase has always been commented in place with a `vN` marker) plus this pass's own work. If you're looking for *why* a particular line exists, search the source for its version tag first — the reasoning usually lives right there.
 
+## v11.9 (Stage 4b of the quality rebuild: the strategy pass)
+
+- **`STRATEGY.md` (new):** a review of the whole desk using your master-prompt frame (strategist, operator, quality reviewer, real limits): what "better" means, the real constraints, what each stage found, ideas ranked by impact and effort, what was deliberately not built and why, and a 30-day plan. Its top recommendation: make the unattended GitHub hourly news workflow ask for approval (add the two Telegram secrets) or disable it, since it is the one path where a plain-template post can go out unseen.
+- **A weekly short DATA post.** Research topics (the data ones) used to appear once a month, as the long article, while two explainers went out every week. The Friday run now publishes a short post from a research topic with a ranked-bar chart of its own numbers; Tuesday stays an explainer and the first Saturday stays the long article. `RESEARCH_DATA_DAY` sets the weekday (`mon`..`fri`, or `off`; Saturday is refused because it is the article's day). `RESEARCH_MODE=data` forces one; a forced research topic with no mode is still the long article. The Telegram preview calls the image "Chart for this post".
+- 518 tests (was 512): the weekday parser, and two end-to-end runs (data mode makes a short chart post; without it a forced research topic is still the article).
+
+## v11.8 (Stage 4a of the quality rebuild: more data, real charts)
+
+- **Six new data sources**, all free and keyless, with response shapes checked against the providers' docs: DefiLlama stablecoins (note: `circulating` is an object keyed by peg type, not a number), DefiLlama chains (TVL by chain), DefiLlama fees; mempool.space difficulty adjustment, block height and mining pools. Each has a tolerant parser: an unexpected shape is reported as "the format may have changed" (Stage 3), never posted.
+- **Bitcoin supply is computed, not scraped.** From the tip block height: subsidy, halvings so far, blocks to the next halving, BTC mined. Checked against known chain facts (exactly 19,687,500 BTC at block 839,999; 3.125 BTC subsidy after the 4th halving; never above 21 million).
+- **Six new topics (11 → 17):** how the halving works, how mining difficulty adjusts, who mines Bitcoin blocks, where stablecoin supply sits, where DeFi deposits live, what DeFi protocols collect in fees. Each has vetted concept notes; the three education/explainer ones need two independent sources (Stage 3's minimum applies).
+- **Ranked-bar charts (`buildRankedBarsSvg`).** Left-aligned bars on a baseline in the brand yellow, the leader at full strength and the rest dimmed, values at the bar ends, source and date in the footer. Not green/red: those mean up/down and a share is neither. Research topics with chartable numbers now use the chart of their own data as the image (stablecoin supply, TVL by chain, fees, pool share of blocks, DEX share, top protocols); the article cover is the fallback, and education topics keep the explainer slide.
+- **Finding:** research topics are always published as the monthly long-form article (first Saturday), and only education topics are short posts. So the data topics appear about once a month in rotation. Chart condition fixed accordingly (it first only applied to short posts, which research topics never are).
+- 512 tests (was 469): `test/research-sources.test.mjs` (parsers against real-shaped fixtures, supply arithmetic, and a guard that runs all 17 topics through fact-gathering and chart-building), plus three end-to-end research tests through the real `post.mjs`. Shared fixtures live in `test-support/fixtures.mjs`.
+
+## v11.7 (Stage 3 of the quality rebuild: research reliability)
+
+- **Every failed source now says why.** Node reports every network problem as "fetch failed". The log now says "timed out", "DNS lookup failed (ENOTFOUND)", "connection refused", "connection dropped", "HTTP 403 (blocked)", "HTTP 429 (rate limited)", "response was not valid JSON", with the attempts and seconds: `FAILED: DefiLlama (defillama-protocols): HTTP 503 (3 attempts, 2.9s)`. The same reasons go into the GitHub Job Summary under "Failed sources".
+- **Retries.** Network errors, timeouts, HTTP 429 and 5xx are retried (default 2 retries, 700ms then 1400ms backoff; a short `Retry-After` is respected). 403, 404 and malformed JSON are not retried, because retrying cannot fix them. `RESEARCH_RETRIES` sets the count.
+- **A source that answers with nothing usable is reported.** A reshaped DefiLlama response, an empty fee table or a Wikipedia disambiguation page used to produce an empty block with no reason. It now says "answered, but no protocols could be read (the format may have changed)".
+- **Failure reasons are no longer thrown away.** When every source failed, `gatherFacts` returned nothing and the reasons were lost. It now always returns what happened.
+- **Concept notes are always in the facts.** Each topic's curated definitions were only printed in the article, never shown to the writer, so a Wikipedia outage left the model with no explanation to ground against. They are now a block of the facts (labelled "Concept notes", never credited as a source and never printed under "The numbers today"), and the prompt tells the model to use them for the explanation and the data lines for figures.
+- **Minimum independent sources.** DefiLlama's two endpoints count as one source. A topic that declares two independent sources (for example Wikipedia and DefiLlama) is not posted on one: the log says why, nothing is made, and the topic is not marked as used so a later run retries it. `RESEARCH_MIN_SOURCES` overrides it (capped at what the topic declares, so no topic can be made unpostable).
+- **Sources are fetched in parallel**, and each is credited once.
+- 469 tests (was 435): `test/research-reliability.test.mjs` plus four end-to-end research tests through the real `post.mjs` (healthy, source down, minimum relaxed, source answering with garbage). The test mock gained a DefiLlama endpoint with failure modes.
+
+## v11.6 (Stage 2 of the quality rebuild: alerts)
+
+- **Noise alerts stopped.** A level alert used to fire whenever the price 30 minutes ago and the price now were on opposite sides of a round level, even by cents (BNB drifting from $740.31 to $739.98 posted "falls below $740"). Now both prices must be at least `ALERT_LEVEL_MARGIN_PCT` (0.15%) past the level. If the nearest level is not clean, an earlier level that is clean is used.
+- **Second price source.** Before an alert is claimed, Binance's price is compared with CoinGecko's. More than `ALERT_PRICE_TOLERANCE_PCT` (2%) apart and the alert is held, with nothing claimed or posted: a wrong "falls below $83,000" is worse than a missed one. CoinGecko is called only when an alert is about to fire. A coin with no mapped id, or a failed lookup, posts unchecked and the log says so.
+- **Context from real candles.** "Lowest since Nov. 6" (or "highest since") from 168 hourly Binance candles, only when it is true, the history is at least 3 days, and the answer is more than 24 hours old. If nothing in the week was that low it says "lowest in at least 7 days". The line is in the facts the model sees, so the validator allows the date, and the plain template leads with it. A date the model invents is still rejected.
+- **The glowing line is the default chart again.** Candlesticks are opt-in with `ALERT_CHART_STYLE=candles`. News cards are unchanged.
+- **Card hero matches the headline.** A 24h-move alert's card showed a 30-minute flash figure ("−3.2% in 30 min") under a 24h headline ("down 9.0% in 24 hours"). It now shows the 24h figure when that is itself extreme; level alerts still lead with the fast move.
+- 435 tests (was 403): `test/alerts-stage2.test.mjs` plus five end-to-end tests through the real `post.mjs` (sources agree, sources disagree, second source down or off, context line, chatter). The test mock gained a CoinGecko price endpoint and an hourly-history option.
+
+## v11.5 (Stage 1 of the quality rebuild: the writing)
+
+A rebuild of the "v12" writing overhaul that was lost in a sandbox reset. Done in stages, each shipped as its own zip.
+
+- **`style.mjs` (new): a voice linter used by every writer.** It rejects the machine-written habits seen in the dry-run logs: scene-setting openers ("Ever wonder"), "not just X but Y", closing questions, dashes used as a flourish, mood-of-the-market phrases ("search interest splits between macro staples and smaller names"), hype words, and buzzwords ("spotlight", "landscape", "underscores"). A failure is retryable: the model is told why and tries again; after that the plain template is used. Numeric ranges like 3–5% are not treated as flourishes.
+- **All five writers now carry the same style guide** (news, alerts, daily, research, weekly article) and run the lint on what comes back. Compliance checks (predictions, advice) still run first so their reasons win.
+- **No closing questions anywhere.** The daily post's "Contrarian Question" vibe, which forced every fifth post to end on a question, is replaced by "Closing Fact". The research post no longer has a QUESTION line; a model that adds one is ignored. Single and multi-coin daily posts no longer ask for a CTA.
+- **Plainer disclaimers.** "NFA", "DYOR", "Always DYOR", "for information only" and dash-joined variants are gone. News and daily posts rotate between "Not financial advice." and "Not financial advice. Do your own research."; research posts and the weekly recap use "Not financial advice."
+- **Cloud models first.** The PC runner used to put the local Ollama model first whenever one was installed. A 3B model on a laptop wrote the flattest copy, so it is now the offline backup only (`AI_PROVIDER_ORDER=ollama,groq` puts it first again if you want it).
+- **Name check fixed.** Real headlines use the curly apostrophe, so "Robinhood’s" was rejected as an unknown name; and "Securities and Exchange Commission" was rejected when the source said "SEC". Both are now grounded (a table of common acronym pairs, in both directions). A truly unknown name is still rejected.
+- **Attribution bug fixed.** "Analyst Min Jung of Presto Labs said…", the exact format the news prompt teaches, was being rejected because only "analysts at <firm>" counted as owned. A named person now owns the view.
+- Prompt examples that themselves contained dash flourishes or "not just…" were rewritten so the prompts never teach what the lint rejects.
+- 403 tests (was 361): `test/style.test.mjs` covers the exact lines from your logs (must be caught), realistic wire copy (must pass), the name fixes, and that every prompt carries the voice rules.
+
+## v11.4.1 (repo hygiene after v11.4; plus a per-feed off switch)
+
+- **`.env.example` restored.** The copy on GitHub was an old one: it had lost the alerts, weekly-article, card, research and `SEC_USER_AGENT` / `NEWS_FETCH_TIMEOUT_SEC` / `NEWS_DISCLAIMER` settings and still said `NEWS_MAX_PER_DAY=12` (the real default is 40). It is the full v11.3 file again.
+- **Removed `test/tests.yml`.** An old, unused workflow copy that pointed at a path that does not exist (`.github/workflows/tests.yml`). The real one is `.github/workflows/test.yml`.
+- **`card-previews/` is ignored again** (it is generated by `node preview-cards.mjs`; the v11.4 repo had it committed and the ignore line missing).
+- **News card:** with a price chart, the chart now starts higher and is taller, so short headlines no longer leave a large empty band.
+- **`NEWS_FEEDS_OFF=CryptoSlate`:** turn off any news feed by name. CryptoSlate refuses the PC's connection (HTTP 403) and showed as a failed feed every cycle.
+- **`PC-SETUP.md`:** the "files you need in the repo" list now includes `check-sync.mjs`, `run-mode.mjs`, `make-avatar.mjs`, `preview-cards.mjs`, `brand/`, `test-support/` and the `.bat`/`.ps1` helpers.
+
 ## v11.4 (candlestick charts, one-piece T, plainer disclaimer)
 
 - **Real candlestick charts.** Alert and extreme-move cards now draw proper OHLC candles (green body = closed up, red = closed down, wicks for high/low) with a volume strip underneath, the 24h high/low in the caption, the last close dotted across, and the crossed level still dashed. Extreme cards get the same candles with a glow. Binance already returns open/high/low/close/volume for the price history the bot fetched, so no new request is made. More than 48 candles are merged into 48 so the chart stays readable (`aggregateCandles`). News cards accept `candles` too. If only closing prices are available the old line is drawn, so nothing regresses.

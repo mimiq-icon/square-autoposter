@@ -54,7 +54,7 @@ Model overrides (all optional, sane defaults baked in): `GROQ_MODEL`, `OPENROUTE
 | `weekly-publish` | Reads the (possibly human-edited) approved issue, uploads the real chart, publishes for real. Fails loudly rather than substituting different content. |
 | `news` | Picks the single best fresh story from the feeds and posts it (or posts nothing). Run hourly by GitHub and continuously by `local-runner.mjs`. See below. |
 | `alerts` | Checks Binance prices for level crossings and big 24h moves; posts at most one alert, with the branded alert card. Run by the PC runner every cycle; `alert-post.yml` on GitHub is manual by default. |
-| `research` | The education & research desk: picks a topic by rotation, fetches its facts (DefiLlama / mempool.space / Wikipedia), writes from those facts only, validates, asks on Telegram, publishes. `RESEARCH_MODE=auto` posts a short explainer and — on the first Saturday of the month — a long-form article instead. |
+| `research` | The education & research desk: picks a topic by rotation, fetches its facts (DefiLlama / mempool.space / Wikipedia), writes from those facts only, validates, asks on Telegram, publishes. Each source is retried on transient failures and logged with the reason it failed; the topic's vetted concept notes are always part of the facts; a topic that needs two independent sources is not posted on one (`RESEARCH_MIN_SOURCES`, `RESEARCH_RETRIES`). `RESEARCH_MODE=auto` posts a short data post with a ranked chart on `RESEARCH_DATA_DAY` (default Friday), a short explainer on other days, and — on the first Saturday of the month — a long-form article instead (`short`, `data` and `article` force one). It was: a short explainer and — on the first Saturday of the month — a long-form article instead. |
 | `weekly-approve` | Writes the AI weekly article from facts, sends the full text to Telegram, publishes only on your Post tap (used by `weekly-article-telegram.yml`). |
 
 Diagnostics: `DRY_RUN=true` (print, don't post — covers every code path, including image upload), `DAY_INDEX_OVERRIDE=<1-31>` (test a specific vibe/template rotation on demand).
@@ -71,9 +71,15 @@ GitHub runs it from `news-post.yml` every hour. Manual runs default to **dry run
 | `NEWS_MIN_GAP_MIN` | 5 | Minimum minutes between two posts, shared by the PC and GitHub (`0` = off). |
 | `NEWS_CARDS` | true | Branded card image on every news post (`false` = text-only). PNG rendering needs the one-time `npm install --no-save @resvg/resvg-js` (the workflows do it; the PC setup covers it too). |
 | `ALERT_CHART_HOURS` | 24 | Window for the alert card's price range. |
+| `ALERT_CHART_STYLE` | `line` | The alert card's chart: the glowing line (default) or `candles` for candlesticks. |
+| `ALERT_LEVEL_MARGIN_PCT` | 0.15 | A level alert needs a clean cross: the price 30 minutes ago and the price now must both be this % past the level. Stops "falls below $740" at $739.98. `0` restores the old behaviour. |
+| `ALERT_PRICE_CHECK` | on | Before an alert fires, the price is checked against CoinGecko. `off` disables it. |
+| `ALERT_PRICE_TOLERANCE_PCT` | 2 | If Binance and CoinGecko differ by more than this, the alert is held and nothing is posted. A coin with no second source, or a failed lookup, is posted unchecked. |
+| `ALERT_CONTEXT` | on | Adds "lowest since Oct. 14" from a week of hourly candles when it is true and more than a day old. `off` disables it. |
 | `CARD_SCALE` | 2 | PNG render multiplier (2 = 2160×2160 for a 1080 card). |
 | `NEWS_REQUIRE_AI` | false | `true` = skip a story rather than post the plain-headline fallback. |
 | `NEWS_EXTRA_FEEDS` | none | Add feeds without editing code: `Name|https://url,Name2|https://url2`. |
+| `NEWS_FEEDS_OFF` | none | Drop built-in feeds by name, e.g. `CryptoSlate` (a feed that answers HTTP 403 on your PC). |
 | `NEWS_APPROVAL` | `sensitive` if Telegram is set up, else `off` | `off` / `sensitive` / `all`. Which stories wait for your tap on Telegram. |
 | `NEWS_APPROVAL_WAIT_MIN` | 8 | How long a draft waits for a tap. No tap = not posted. |
 | `NEWS_GIT_SYNC` | `true` in `news-post.yml`; automatic on the PC runner | Claim stories through git so two machines can't double-post. Needs the folder to be a git clone. |

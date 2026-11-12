@@ -97,7 +97,7 @@ import path from "path";
 import crypto from "crypto";
 import { pathToFileURL } from "url";
 import {
-  NEWS_FEEDS, parseExtraFeeds, parseFeed, normalizeNewsState, pruneNewsState, dailyCount,
+  NEWS_FEEDS, parseExtraFeeds, filterFeedsOff, parseFeed, normalizeNewsState, pruneNewsState, dailyCount,
   recordClaim, setEntryStatus, removeClaim, gapBlock, resolveApprovalMode,
   pickNewsStory, buildNewsPrompt, parseNewsAiOutput, validateNewsCopy,
   buildNewsTemplate, assembleNewsPost, resolveNewsDisclaimer, detectCoins,
@@ -111,19 +111,20 @@ import { gitAvailable, pullState, commitPush } from "./news-sync.mjs";
 // unit-testable; this file owns all I/O for them.
 import {
   buildNewsCardSvg, buildAlertCardSvg, buildExtremeAlertCardSvg, buildExplainerSlideSvg, buildArticleCoverSvg,
-  buildBarChartSvg, buildStatGridSvg, buildLineChartSvg, renderSvgToPng,
+  buildBarChartSvg, buildRankedBarsSvg, buildStatGridSvg, buildLineChartSvg, renderSvgToPng,
 } from "./cards.mjs";
 import {
-  RESEARCH_TOPICS, pickResearchTopic, gatherFacts, buildResearchPrompt,
+  RESEARCH_TOPICS, pickResearchTopic, parseDataDay, gatherFacts, researchChartFor, minSourcesFor, needFamily as needFamilyName, buildResearchPrompt,
   parseResearchAiOutput, validateResearchCopy, assembleResearchPost,
   buildResearchArticleMarkdown, computeDexShares, isFirstSaturday,
 } from "./research.mjs";
 // v10.2 (restored in v11.1): price alerts and the AI-written weekly article.
 import {
   DEFAULT_ALERT_COINS, COIN_NAMES, detectAlerts, alertFacts, buildAlertPrompt, buildAlertTemplate,
-  extremeMove, assembleAlertPost, buildPriceChartConfig, chartWindow, fmtUsd, fmtLevel, loadAlertState, saveAlertState,
+  extremeMove, assembleAlertPost, contextFromCandles, COINGECKO_IDS, crossCheckVerdict, alertChartStyle, buildPriceChartConfig, chartWindow, fmtUsd, fmtLevel, loadAlertState, saveAlertState,
   pruneAlertState, recordAlertClaim, setAlertStatus, removeAlertClaim, alertsToday,
 } from "./alerts.mjs";
+import { lintStyle, STYLE_GUIDE } from "./style.mjs";
 import { buildArticleFacts, buildArticlePrompt, parseArticleOutput, validateArticle, wordCount } from "./article.mjs";
 
 // ---------------------------------------------------------------------------
@@ -657,7 +658,7 @@ function buildSnapshotPost(data, dayIndex) {
     "\uD83D\uDCCA Crypto Market Snapshot",
     ...lines,
     "",
-    "Which one are you watching today? Not financial advice \u2014 always DYOR.",
+    "Not financial advice.",
   ].join("\n");
 }
 
@@ -678,7 +679,7 @@ function buildTopMoverPost(data) {
     `Price: ${fmtPrice(best.price)} \u2014 ${direction} ${Math.abs(best.change24h).toFixed(2)}% in 24h.`,
     rangeLine,
     "",
-    "Market data only, not a trade signal. Always DYOR.",
+    "Not financial advice.",
   ].join("\n");
 }
 
@@ -722,7 +723,7 @@ function buildWeeklyRecapPost(data, dayIndex) {
     "\uD83D\uDCC5 Weekly Crypto Recap",
     ...lines,
     "",
-    "7-day view, not a forecast. Always DYOR.",
+    "Not financial advice.",
   ].join("\n");
 }
 
@@ -748,7 +749,7 @@ function buildMacroOverviewPost(data, dayIndex, globalMarket, fng) {
     "Featured:",
     ...coinLines,
     "",
-    "State of the market, not a forecast. Always DYOR.",
+    "Not financial advice.",
   ].filter(Boolean).join("\n");
 }
 
@@ -768,7 +769,7 @@ function buildAnomalyRadarPost(anomalies) {
     "\uD83D\uDEA8 Anomaly Radar \u2014 unusual 24h moves",
     ...lines,
     "",
-    "Notable moves, not trade signals. Always DYOR.",
+    "Not financial advice.",
   ].join("\n");
 }
 
@@ -786,7 +787,7 @@ function buildTrendingTodayPost(trending) {
     "Top searched coins on CoinGecko right now:",
     ...lines,
     "",
-    "Trending \u2260 recommendation. Always DYOR.",
+    "Not financial advice.",
   ].join("\n");
 }
 
@@ -816,7 +817,7 @@ function buildMarketSentimentPost(fng, data, dayIndex) {
     "",
     `Watching $${coin.symbol} at ${fmtPrice(coin.price)} (${fmtPct(coin.change24h)} 24h).`,
     "",
-    "Sentiment reading, not financial advice. Always DYOR.",
+    "Not financial advice.",
   ].join("\n");
 }
 
@@ -844,7 +845,7 @@ function buildTopMoversDigestPost(broadMovers) {
     `Worst 24h: $${loser.symbol} ${fmtPct(loser.change24h)}, now ${fmtPrice(loser.price)}.`,
     `Breadth: ${greenCount}/${broadMovers.length} of the top 100 are green today.`,
     "",
-    "Market breadth, not a trade signal. Always DYOR.",
+    "Not financial advice.",
   ].join("\n");
 }
 
@@ -870,7 +871,7 @@ function buildMarketSpotlightPost(broadMovers) {
     `Rank #${spotlight.rank ?? "n/a"} by market cap, ${direction} ${Math.abs(spotlight.change24h).toFixed(2)}% in 24h to ${fmtPrice(spotlight.price)}.`,
     `24h volume: ${fmtMcap(spotlight.volume24h)}.${athLine}`,
     "",
-    "One coin's numbers, not a recommendation. Always DYOR.",
+    "Not financial advice.",
   ].join("\n");
 }
 
@@ -1036,16 +1037,6 @@ function checkVibeAdherence(text, vibeName) {
       return true;
     }
 
-    case "Contrarian Question": {
-      // Must end with a question mark — the vibe instruction says "end with
-      // a curiosity question." If there's no question, the vibe wasn't followed.
-      // (Banned-phrase check already catches trade questions like "are you buying".)
-      if (!text.trim().endsWith("?")) {
-        return { reason: "Contrarian Question vibe requires ending with a curiosity question (must end with '?')." };
-      }
-      return true;
-    }
-
     default:
       return true; // unknown vibe — don't block
   }
@@ -1196,6 +1187,10 @@ function isSafeAiText(text, allowedSymbols, vibeName) {
       return { ok: false, reason: `banned phrase "${phrase}"`, retryable: false };
     }
   }
+
+  // v11.5: voice check. Closing questions, "not just X but Y", dash flourishes
+  // and buzzwords are rejected with the reason fed back to the model.
+  { const st = lintStyle(trimmed.replace(/\$[A-Za-z]{2,6}/g, "COIN"), { kind: "short" }); if (!st.ok) return { ok: false, reason: st.reason, retryable: true }; }
 
   // v5.6: Vibe adherence check. If a vibeName was provided, verify the
   // output actually follows the vibe instruction. This is the check that
@@ -1432,7 +1427,7 @@ async function callAiWithFallback(prompt, allowedSymbols, vibeName) {
 // main() falls back to a template.
 // ---------------------------------------------------------------------------
 // v7: Disclaimer rotation. Every AI post previously closed on the identical
-// literal string "Not financial advice. DYOR." — same substance every time,
+// literal string "Not financial advice." — same substance every time,
 // but it's also the strongest monotony signal in the whole post (identical
 // last line, every day, regardless of vibe). Rotating the wording keeps the
 // same legal/compliance meaning (still says "not advice, do your own
@@ -1441,9 +1436,8 @@ async function callAiWithFallback(prompt, allowedSymbols, vibeName) {
 // advice" (case-insensitive) — every variant below satisfies that check, so
 // this doesn't loosen the compliance gate at all, just varies its wording.
 const DISCLAIMER_VARIANTS = [
-  "Not financial advice. DYOR.",
-  "NFA. Always DYOR.",
-  "Not financial advice — do your own research.",
+  "Not financial advice.",
+  "Not financial advice. Do your own research.",
 ];
 
 async function buildAiPost(data, dayIndex, style, ctx = {}) {
@@ -1484,8 +1478,10 @@ async function buildAiPost(data, dayIndex, style, ctx = {}) {
       instruction: "If volume data is available, note whether high-volume coins are moving on that volume or not. If no volume data, fall back to Plain Update.",
     },
     {
-      name: "Contrarian Question",
-      instruction: "End with a curiosity question that asks what readers are watching, without suggesting they should buy or sell. E.g. 'Which one are you keeping an eye on?'",
+      name: "Closing Fact",
+      // v11.5: replaces "Contrarian Question". Ending every fifth post on a
+      // question to the reader is the clearest machine-written tell there is.
+      instruction: "Make the last sentence before the disclaimer one specific comparison that is only true because of today's numbers (a gap between two coins, a share of the week's move, a distance from the range high). No question.",
     },
   ];
   // v5.5: Vibe index uses dayIndex % 5. Template rotation (in main()) now
@@ -1514,23 +1510,23 @@ async function buildAiPost(data, dayIndex, style, ctx = {}) {
       // Range Watcher, wrote a 7d comparison). Now the 7d comparison is
       // "available, use if it fits the vibe" instead of "mandatory centerpiece."
       directive: "Write this as real prose, not a data export. Do NOT just stack '$COIN price (change%) · $COIN price (change%)' back to back — weave each coin's numbers into actual sentences. The data includes 24h change, 7d change, 24h range, volume, and ATH distance — pick whichever angles fit today's vibe instruction. If the vibe calls for range observation, use the 24h high/low. If it calls for comparison, contrast two coins' 7d moves. Don't force the same angle every day. Do NOT compare volume or market cap size between coins — that ordering barely changes day to day.",
-      example: "$COIN1 is holding close to flat at $7.91 today, while $COIN2 ($63,199) and $COIN3 ($1,776.83) both push higher, up 0.81% and 0.98%. The bigger story is the week: $COIN3 is up 12.4% over 7 days, more than double $COIN2's 7-day gain. Not financial advice. DYOR.",
+      example: "$COIN1 is holding close to flat at $7.91 today, while $COIN2 ($63,199) and $COIN3 ($1,776.83) both push higher, up 0.81% and 0.98%. Over the week $COIN3 is up 12.4%, more than double $COIN2's 7-day gain. Not financial advice.",
     },
     mover: {
       directive: "Lead with the coin that moved most. State the move and current price in one sentence. Add one line of neutral context using at least two of: volume, 24h high/low range, 7-day change, ATH distance — whatever the data provides and the vibe emphasizes. Don't speculate on why it moved.",
-      example: "Today's biggest mover: $COIN1 at $123, up 5.4% in 24h on $4.5B volume. Traded between $118 and $126 today, and is up 11% over the past week. Not financial advice. DYOR.",
+      example: "Today's biggest mover: $COIN1 at $123, up 5.4% in 24h on $4.5B volume. Traded between $118 and $126 today, and is up 11% over the past week. Not financial advice.",
     },
     educational: {
       directive: "Explain ONE crypto concept in plain language in 2 sentences. Then mention one coin's current price as a concrete example. Don't list multiple concepts — pick one and explain it well. The concept is the main content; the price is just a concrete anchor.",
-      example: "Market cap = price × circulating supply. It values coins already in circulation, not future token unlocks. For context, $COIN1 at $67,234 has a market cap around $1.3T. Not financial advice. DYOR.",
+      example: "Market cap = price × circulating supply. It values coins already in circulation, not future token unlocks. For context, $COIN1 at $67,234 has a market cap around $1.3T. Not financial advice.",
     },
     macro: {
       directive: "Give the big picture in 2 sentences: total market cap + BTC dominance + (if available) sentiment. Mention one featured coin briefly. Don't list every number — pick the 2-3 that tell the story and let the vibe guide which angle to emphasize.",
-      example: "Total crypto market cap sits at $2.28T with dominance concentrated in the top asset. Fear & Greed at 24/100 (extreme fear). $COIN1 at $67,234 holding above recent lows. Not financial advice. DYOR.",
+      example: "Total crypto market cap sits at $2.28T with dominance concentrated in the top asset. Fear & Greed at 24/100 (extreme fear). $COIN1 at $67,234 holding above recent lows. Not financial advice.",
     },
     anomaly: {
       directive: "State the unusual move(s) factually — coin, direction, magnitude, in one sentence per coin. Add one line noting this is notable without interpreting it as a trade setup. Maximum 3 coins.",
-      example: "Unusual 24h moves: $COIN1 +12.3% (vol $4.5B), $COIN2 -8.5% (vol $2.1B). Both moves stand out against an otherwise quiet watchlist. Not financial advice. DYOR.",
+      example: "Unusual 24h moves: $COIN1 +12.3% (vol $4.5B), $COIN2 -8.5% (vol $2.1B). Both moves stand out against an otherwise quiet watchlist. Not financial advice.",
     },
     trending: {
       // v5.5: Acknowledged that trending data only has symbol/name/rank —
@@ -1538,25 +1534,25 @@ async function buildAiPost(data, dayIndex, style, ctx = {}) {
       // with what's actually there (rank positioning, search-interest context)
       // instead of implying price data exists.
       directive: "List what's trending on CoinGecko right now. The data only includes symbol, name, and market cap rank — no prices or price changes. Work with what's there: rank positioning, name recognition, search-interest context. Don't invent prices or changes. One compact line listing the coins, then one sentence of context for why these might be getting attention (without speculating on price direction).",
-      example: "Trending on CoinGecko: $COIN1 (rank #5), $COIN2 (rank #1), $COIN3 (rank #10). Search interest spiking across both established names and newer entrants. Not financial advice. DYOR.",
+      example: "Trending on CoinGecko: $COIN1 (rank #5), $COIN2 (rank #1), $COIN3 (rank #10). Search interest spiking across both established names and newer entrants. Not financial advice.",
     },
     sentiment: {
       directive: "State the Fear & Greed reading and what it means. One sentence on what this extreme historically coincides with — without framing it as a buy/sell signal. Mention one coin's price as an anchor.",
-      example: "Fear & Greed Index at 24/100 — extreme fear territory. Historically this reading has coincided with capitulation and high volatility, not a directional signal by itself. $COIN1 at $67,234. Not financial advice. DYOR.",
+      example: "Fear & Greed Index at 24/100, which is extreme fear. Readings this low have come with sharp swings, and the index alone does not give a direction. $COIN1 at $67,234. Not financial advice.",
     },
     digest: {
       // v9: Report on breadth across the top 100 coins, not just the 8-coin
       // watchlist. The point is contrast: one great day + one bad day + how
       // widely that's shared, not a laundry list of names.
       directive: "Report on market breadth using the top-100 digest data: the best 24h gainer, the worst 24h loser, and how many of the top 100 coins are green today. State what the breadth number implies about how broad-based today's moves are — don't just list the three numbers with no connective point.",
-      example: "$COIN1 leads the top 100 today at +9.2%, while $COIN2 lags at -6.1%. 62 of the top 100 are green — a broadly positive day, not just one or two names carrying it. Not financial advice. DYOR.",
+      example: "$COIN1 leads the top 100 today at +9.2%, while $COIN2 lags at -6.1%. 62 of the top 100 are green today. Not financial advice.",
     },
     spotlight: {
       // v9: Deliberately a single name OUTSIDE the core watchlist — the
       // whole point is surfacing something the reader isn't already seeing
       // in every other post.
       directive: "Spotlight ONE coin from outside the usual watchlist — its market cap rank, 24h move, volume, and (if available) distance from all-time high. This is a deep dive on a single name the reader probably isn't already tracking, not a comparison to other coins.",
-      example: "$COIN1 (rank #34) is up 14.8% in 24h to $2.31 on $310M volume — still 71% below its all-time high. A name outside the usual watchlist worth a second look. Not financial advice. DYOR.",
+      example: "$COIN1 (rank #34) is up 14.8% in 24h to $2.31 on $310M volume, still 71% below its all-time high. A name outside the usual watchlist worth a second look. Not financial advice.",
     },
   };
 
@@ -1667,23 +1663,13 @@ async function buildAiPost(data, dayIndex, style, ctx = {}) {
   // (Day 3's mover) and incoherent for educational posts (Day 4's "Which $DOGE
   // move" tacked onto a market-cap definition). Now picks the CTA based on
   // what actually fits the post shape.
-  let ctaInstruction;
-  if (style === "educational") {
-    // Educational posts end with the concept + example price. A CTA tacked on
-    // doesn't fit — Day 4 proved this. Drop it entirely.
-    ctaInstruction = "- CTA: Skip. Educational posts end after the concept and example. Do not tack a question on.";
-  } else if (allowedSymbols.length === 1) {
-    // Single-coin posts (mover) — "which one" is grammatically wrong when
-    // there's only one. Use a single-coin CTA instead.
-    const onlyCoin = allowedSymbols[0];
-    ctaInstruction = `- CTA (optional): End with a curiosity question about $${onlyCoin} specifically, e.g. "What's your read on $${onlyCoin} today?" — NOT "which one" (there's only one). NOT a trade question.`;
-  } else {
-    // Multi-coin posts — the standard curiosity CTA fits.
-    ctaInstruction = `- CTA (optional): End with a curiosity question like 'Which one are you watching?' — NOT a trade question like 'are you buying?'.`;
-  }
+  // v11.5: no call to action on any post. Asking the reader a question is
+  // engagement bait and the most recognisable machine-written habit. Every
+  // post now ends on a fact, then the disclaimer.
+  const ctaInstruction = "- CLOSE: No question and no call to action. End the body on a specific fact from DATA, then the disclaimer.";
 
   const prompt = [
-    "You write like a knowledgeable friend texting a quick market update — concise, direct, no filler.",
+    "You are a market-desk reporter writing one short Binance Square update: concise, direct, plain wire copy.",
     "",
     `TASK: ${config.directive}`,
     "",
@@ -1695,10 +1681,12 @@ async function buildAiPost(data, dayIndex, style, ctx = {}) {
       : `CASHTAGS: Use $TICKER for at least 2 of: ${allowedSymbols.map((s) => "$" + s).join(", ")}. Max ${MAX_CASHTAGS_PER_POST} unique coins. Use ONLY these symbols — no others.`,
     "",
     "STRUCTURE (follow this):",
-    "- HOOK: One sentence that grabs attention — a surprising number, a contrast, or a direct question.",
+    "- HOOK: One declarative sentence that leads with the most notable number or contrast in DATA. Never a question.",
     "- BODY: 1-2 sentences with the key facts from DATA. Dense, no filler.",
     ctaInstruction,
     `- DISCLAIMER: End with exactly this line: ${disclaimer}`,
+    "",
+    ...STYLE_GUIDE,
     "",
     "STYLE RULES:",
     "- 2-4 sentences total. Target 150-300 characters. Short and dense beats long and repetitive.",
@@ -2210,7 +2198,7 @@ function buildWeeklyArticle(data, dayIndex, ctx = {}) {
   // in Section 2, above, so they take priority over anomalies/trending).
   const bodySoFar = sections.join("\n");
   const articleHashtags = pickHashtags(bodySoFar);
-  sections.push(`*Weekly recap, not financial advice. Always DYOR.* ${articleHashtags.join(" ")}`);
+  sections.push(`*Weekly recap. Not financial advice.* ${articleHashtags.join(" ")}`);
 
   const body = sections.join("\n");
   return { title, body };
@@ -2620,7 +2608,7 @@ async function fetchNewsFeed(feed, cache) {
 }
 
 async function fetchAllNews() {
-  const feeds = [...NEWS_FEEDS, ...parseExtraFeeds(process.env.NEWS_EXTRA_FEEDS)];
+  const feeds = filterFeedsOff([...NEWS_FEEDS, ...parseExtraFeeds(process.env.NEWS_EXTRA_FEEDS)], process.env.NEWS_FEEDS_OFF);
   const cacheFile = process.env.NEWS_FEED_CACHE_FILE;
   let cache = null;
   if (cacheFile) {
@@ -3219,7 +3207,7 @@ function saveResearchStateFile(file, state) {
   fs.writeFileSync(file, JSON.stringify(state, null, 2) + "\n");
 }
 
-function writeResearchSummary({ outcome, topic, kind, provider, text, title, id, dryRun, factHealth }) {
+function writeResearchSummary({ outcome, topic, kind, provider, text, title, id, dryRun, factHealth, failures }) {
   const f = process.env.GITHUB_STEP_SUMMARY;
   if (!f) return;
   const lines = [`### Research run — ${outcome}`, ""];
@@ -3228,6 +3216,7 @@ function writeResearchSummary({ outcome, topic, kind, provider, text, title, id,
       `**Topic:** ${topic.title} (${kind})`,
       `**Written by:** ${provider ? `AI (${provider})` : "skipped"} · **Dry run:** ${dryRun ? "yes" : "no"}`,
       factHealth ? `**Fact sources:** ${factHealth.join(", ")}` : "",
+      failures && failures.length ? `**Failed sources:** ${failures.join("; ")}` : "",
       id && id !== "dry-run-id" ? `**Post:** [View](https://www.binance.com/square/post/${id})` : "",
       "", title ? `**${title}**` : "", "```", text || "", "```", ""
     );
@@ -3272,7 +3261,7 @@ async function callAiForResearch(prompt, factsText) {
 
 async function runResearchMode() {
   const dry = isDryRun();
-  const runMode = process.env.RESEARCH_MODE || "auto"; // auto | short | article
+  const runMode = process.env.RESEARCH_MODE || "auto"; // auto | short | data | article
   const stateFile = process.env.RESEARCH_STATE_FILE || RESEARCH_STATE_FILE_DEFAULT;
   const approvalMode = String(process.env.RESEARCH_APPROVAL ?? "").toLowerCase();
   const tgOn = telegramConfigured();
@@ -3285,10 +3274,15 @@ async function runResearchMode() {
 
   console.log(`\n=== RESEARCH MODE (${runMode}${dry ? ", DRY RUN" : ""}, approval ${needsApproval ? "on" : "off"}) ===`);
 
-  // Which format? auto → article on the first Saturday, short otherwise.
-  // Other Saturdays are reserved: they neither post a short nor an article.
-  let kind = runMode === "article" || (runMode === "auto" && isFirstSaturday(nowMs)) ? "research-article" : "education";
-  let topicKind = kind === "research-article" ? "research" : kind;
+  // Which format? auto → article on the first Saturday; a short DATA post (a
+  // research topic with its ranked chart) on RESEARCH_DATA_DAY (default
+  // Friday); an explainer otherwise. Other Saturdays are reserved: they
+  // neither post a short nor an article.
+  const dataDay = parseDataDay(process.env.RESEARCH_DATA_DAY);
+  let kind = runMode === "article" || (runMode === "auto" && isFirstSaturday(nowMs)) ? "research-article"
+    : runMode === "data" || (runMode === "auto" && dataDay != null && now.getUTCDay() === dataDay) ? "research-short"
+    : "education";
+  let topicKind = kind === "research-article" || kind === "research-short" ? "research" : kind;
   // v11.3: RESEARCH_TOPIC=<id> picks one topic (to dry-run each of them); its own kind decides the format.
   const forcedTopicId = String(process.env.RESEARCH_TOPIC || "").trim();
   if (forcedTopicId) {
@@ -3299,7 +3293,7 @@ async function runResearchMode() {
       return;
     }
     topicKind = forced.kind;
-    kind = forced.kind === "research" ? "research-article" : "education";
+    kind = forced.kind === "research" ? (runMode === "data" ? "research-short" : "research-article") : "education";
   }
   if (!forcedTopicId && runMode === "auto" && now.getUTCDay() === 6 && !isFirstSaturday(nowMs)) {
     console.log(`  Saturday is reserved for the monthly article, and this isn't the first Saturday. Nothing to do.`);
@@ -3329,15 +3323,22 @@ async function runResearchMode() {
   // ---- 2. gather the facts (a missing source just thins the block) ----
   console.log(`  Fetching facts...`);
   const facts = await gatherFacts(topic);
-  if (!facts) {
-    console.log(`  Every fact source failed or returned nothing — not posting an ungrounded piece.`);
-    writeResearchSummary({ outcome: "no facts available", topic, kind, dryRun: dry });
+  const declaredFamilies = new Set((topic.needs || []).map((n) => needFamilyName(n))).size;
+  const minSources = minSourcesFor(topic);
+  for (const b of facts.blocks) {
+    if (b.internal) { console.log(`    notes: concept notes added to the facts (${b.text.length} chars)`); continue; }
+    const secs = ((b.ms || 0) / 1000).toFixed(1);
+    if (b.text) console.log(`    ok: ${b.source} (${b.need}): ${b.text.length} chars, ${secs}s${b.attempts > 1 ? `, took ${b.attempts} attempts` : ""}`);
+    else console.log(`    FAILED: ${b.source} (${b.need}): ${b.error} (${b.attempts || 1} attempt${(b.attempts || 1) === 1 ? "" : "s"}, ${secs}s)`);
+  }
+  console.log(`  Sources: ${facts.families.length} of ${declaredFamilies} independent source${declaredFamilies === 1 ? "" : "s"} answered; minimum to post is ${minSources}.`);
+  const failures = facts.failures.map((b) => `${b.source}: ${b.error}`);
+  if (facts.families.length < minSources) {
+    console.log(`  Not posting a thinly sourced piece. It will be tried again on a later run (the topic is not marked as used).`);
+    writeResearchSummary({ outcome: facts.families.length === 0 ? "no facts available (every source failed)" : "skipped (too few independent sources)", topic, kind, dryRun: dry, failures });
     return;
   }
-  const factHealth = facts.blocks.filter((b) => b.text).map((b) => b.source);
-  for (const b of facts.blocks) {
-    console.log(`    ${b.text ? "ok" : "FAILED"}: ${b.source}${b.error ? ` (${b.error})` : ` — ${b.text.length} chars`}`);
-  }
+  const factHealth = facts.sources;
   topic.sources = factHealth;
 
   // ---- 3. write (AI from facts only, validated) ----
@@ -3353,7 +3354,7 @@ async function runResearchMode() {
       const s2 = loadResearchStateFile(stateFile);
       saveResearchStateFile(stateFile, { ...s2, recent: [...s2.recent.filter((id) => id !== topic.id), topic.id].slice(-RESEARCH_MEMORY) });
     }
-    writeResearchSummary({ outcome: "skipped (no validated copy)", topic, kind, dryRun: dry, factHealth });
+    writeResearchSummary({ outcome: "skipped (no validated copy)", topic, kind, dryRun: dry, factHealth, failures });
     return;
   }
 
@@ -3365,21 +3366,28 @@ async function runResearchMode() {
     : null;
   const articleTitle = kind === "research-article" ? `${topic.title} — ${now.toISOString().slice(0, 10)}` : null;
 
-  // Visuals: explainer slide for short posts, cover for articles.
+  // Visuals: a ranked-bar chart of the topic's own numbers for data topics,
+  // an explainer slide for education topics, a cover for articles.
   let imageUrl = null;
   let researchSvg = null;
+  // Research topics are published as the monthly long-form article; their image is
+  // the chart of their own numbers when one exists (the cover is the fallback).
+  const chart = topic.kind === "research" ? researchChartFor(facts, topic) : null;
+  const visualLabel = chart ? "ranked bar chart" : kind === "research-article" ? "article cover" : "explainer slide";
   try {
-    const svg = kind === "research-article"
-      ? buildArticleCoverSvg({ kicker: topic.kicker, title: topic.title, footer: `The Tape · ${factHealth.join(", ")}` })
-      : buildExplainerSlideSvg({
-          kicker: topic.kicker,
-          title: topic.title,
-          bullets: [copy.body, copy.takeaway],
-          footer: `The Tape · ${factHealth.join(", ")}`,
-        });
+    const svg = chart
+      ? buildRankedBarsSvg({ title: chart.title, subtitle: chart.subtitle, rows: chart.rows, source: chart.source })
+      : kind === "research-article"
+        ? buildArticleCoverSvg({ kicker: topic.kicker, title: topic.title, footer: `The Tape · ${factHealth.join(", ")}` })
+        : buildExplainerSlideSvg({
+            kicker: topic.kicker,
+            title: topic.title,
+            bullets: [copy.body, copy.takeaway],
+            footer: `The Tape · ${factHealth.join(", ")}`,
+          });
     researchSvg = svg;
     if (dry) {
-      console.log(`  Visual: ${kind === "research-article" ? "article cover" : "explainer slide"} — ${await writeCardPreview(svg, "research")}.`);
+      console.log(`  Visual: ${visualLabel} — ${await writeCardPreview(svg, "research")}.`);
     } else {
       imageUrl = await cardToSquareImage(svg, process.env.BINANCE_SQUARE_OPENAPI_KEY);
       console.log(`  Visual rendered and uploaded: ${imageUrl ? "yes" : "no"}`);
@@ -3398,7 +3406,7 @@ async function runResearchMode() {
       const key = process.env.BINANCE_SQUARE_OPENAPI_KEY;
       if (!key) throw new Error("Missing BINANCE_SQUARE_OPENAPI_KEY environment variable.");
       const waitMin = Math.max(1, Number(process.env.RESEARCH_APPROVAL_WAIT_MIN) || 120);
-      if (researchSvg) await previewCardToTelegram(researchSvg, kind === "research-article" ? "Cover for this article" : "Slide for this post");
+      if (researchSvg) await previewCardToTelegram(researchSvg, chart ? "Chart for this post" : kind === "research-article" ? "Cover for this article" : "Slide for this post");
       console.log(`  Sent to Telegram for approval; waiting up to ${waitMin} min...`);
       const verdict = await requestApproval({
         token: process.env.TELEGRAM_BOT_TOKEN,
@@ -3409,7 +3417,7 @@ async function runResearchMode() {
           score: "—",
           reasons: [`grounded on ${factHealth.join(", ")}`],
           provider,
-          decisionReason: kind === "research-article" ? "monthly research article" : `${topicKind} post`,
+          decisionReason: kind === "research-article" ? "monthly research article" : kind === "research-short" ? "weekly data post" : `${topicKind} post`,
         }),
         id: `res-${crypto.createHash("sha1").update(`${topic.id}|${today}`).digest("hex").slice(0, 10)}`,
         waitMs: waitMin * 60_000,
@@ -3493,6 +3501,28 @@ async function fetchBinanceKlines(pair, interval, limit) {
   if (!res.ok) throw new Error(`Binance klines error: ${res.status}`);
   const rows = await res.json();
   return rows.map((r) => ({ openTime: r[0], open: parseFloat(r[1]), high: parseFloat(r[2]), low: parseFloat(r[3]), close: parseFloat(r[4]), volume: parseFloat(r[5]) }));
+}
+
+// v11.5: second price source. Only called when an alert is about to fire (a
+// handful of times a day), so the keyless CoinGecko limit is never at risk.
+async function fetchCoinGeckoUsd(symbol) {
+  const id = COINGECKO_IDS[symbol];
+  if (!id) return null;
+  const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${id}&vs_currencies=usd`, {
+    headers: coingeckoHeaders(), signal: AbortSignal.timeout(SECONDARY_FETCH_TIMEOUT_MS),
+  });
+  if (!res.ok) throw new Error(`CoinGecko price error: ${res.status}`);
+  const json = await res.json();
+  const v = json?.[id]?.usd;
+  return Number.isFinite(v) ? v : null;
+}
+
+async function crossCheckAlertPrice(alert) {
+  if (envOff("ALERT_PRICE_CHECK")) return { ok: true, checked: false, note: "ALERT_PRICE_CHECK=off" };
+  if (!COINGECKO_IDS[alert.symbol]) return { ok: true, checked: false, note: `no second source mapped for ${alert.symbol}` };
+  let other = null;
+  try { other = await fetchCoinGeckoUsd(alert.symbol); } catch (err) { return { ok: true, checked: false, note: `second source failed (${describeFetchError(err)}), alert not cross-checked` }; }
+  return crossCheckVerdict({ price: alert.price, other, tolerancePct: envNumber("ALERT_PRICE_TOLERANCE_PCT", 2) || 2 });
 }
 
 async function fetchAlertSnapshots(symbols, lookbackMin) {
@@ -3600,6 +3630,7 @@ async function runAlertsMode() {
     coins: parseAlertCoins(process.env.ALERT_COINS),
     movePct: envNumber("ALERT_MOVE_PCT", 5) || 5,
     levelPct: envNumber("ALERT_LEVEL_PCT", 1.25) || 1.25,
+    levelMarginPct: envNumber("ALERT_LEVEL_MARGIN_PCT", 0.15),
     lookbackMin: envNumber("ALERT_LOOKBACK_MIN", 30) || 30,
     coinCooldownMin: envNumber("ALERT_COIN_COOLDOWN_MIN", 45),
     maxPerDay: envNumber("ALERT_MAX_PER_DAY", 20) || 20,
@@ -3644,7 +3675,7 @@ async function runAlertsMode() {
       writeAlertSummary({ outcome: `daily cap reached (${today}/${cfg.maxPerDay})`, dryRun: dry });
       return;
     }
-    const found = detectAlerts({ snapshots, fired: state.fired, nowMs, lookbackMin: cfg.lookbackMin, cfg: { levelPct: cfg.levelPct, movePct: cfg.movePct, coinCooldownMin: cfg.coinCooldownMin } });
+    const found = detectAlerts({ snapshots, fired: state.fired, nowMs, lookbackMin: cfg.lookbackMin, cfg: { levelPct: cfg.levelPct, levelMarginPct: cfg.levelMarginPct, movePct: cfg.movePct, coinCooldownMin: cfg.coinCooldownMin } });
     if (!found.length) {
       const glance = snapshots.slice(0, 4).map((s) => `${s.symbol} ${fmtUsd(s.price)} (${s.change24h >= 0 ? "+" : ""}${s.change24h.toFixed(1)}%)`).join(", ");
       console.log(`  No alert: no round level crossed in ${cfg.lookbackMin} min and no ${cfg.movePct}% move. ${glance}`);
@@ -3652,6 +3683,16 @@ async function runAlertsMode() {
       return;
     }
     alert = found[0];
+    {
+      const check = await crossCheckAlertPrice(alert);
+      if (check.checked) console.log(`  Price check: Binance ${fmtUsd(alert.price)} vs CoinGecko ${fmtUsd(check.other)} (${check.divergencePct.toFixed(2)}% apart).`);
+      else console.log(`  Price check: ${check.note}.`);
+      if (!check.ok) {
+        console.log(`  Holding this alert: the two price sources disagree by more than ${envNumber("ALERT_PRICE_TOLERANCE_PCT", 2) || 2}%. Nothing was claimed or posted.`);
+        writeAlertSummary({ outcome: `held (price sources disagree by ${check.divergencePct.toFixed(1)}%)`, alert, dryRun: dry });
+        return;
+      }
+    }
     claimStatus = wantApproval ? "pending" : "posted";
     console.log(`  Alert (score ${alert.score}): ${alert.id} — price ${fmtUsd(alert.price)}, 24h ${alert.change24h >= 0 ? "+" : ""}${alert.change24h.toFixed(1)}%`);
     if (dry) break;
@@ -3672,6 +3713,15 @@ async function runAlertsMode() {
   const release = (why) => { if (!dry) sync.update((s) => removeAlertClaim(s, alert), `alerts: release claim (${why})`); };
   try {
     // ---- write (AI phrases the facts; template if AI is absent or rejected) ----
+    if (!envOff("ALERT_CONTEXT")) {
+      try {
+        const week = await fetchBinanceKlines(`${alert.symbol}USDT`, "1h", 168);
+        alert.context = contextFromCandles({ price: alert.price, dir: alert.dir, candles: week, nowMs });
+        if (alert.context) console.log(`  Context: ${alert.context.text}.`);
+      } catch (err) {
+        console.log(`  Context unavailable (${describeFetchError(err)}); writing without it.`);
+      }
+    }
     const facts = alertFacts(alert);
     let copy = null, provider = null;
     if (hasAnyAiProvider()) {
@@ -3714,11 +3764,13 @@ async function runAlertsMode() {
       try {
         const sparkline = closes && closes.length >= 8 ? closes.map((p) => ({ p })) : null;
         const level = alert.kind === "level" ? alert.level : null;
+        // v11.5: the glowing line is the default. Candlesticks are opt-in.
+        const cardCandles = alertChartStyle(process.env.ALERT_CHART_STYLE) === "candles" ? candles : null;
         const svg = ext.extreme
           ? buildExtremeAlertCardSvg({
               symbol: `$${alert.symbol}`, price: alert.price, heroPct: ext.pct, heroLabel: ext.label,
               change24h: Number.isFinite(alert.change24h) ? alert.change24h : null,
-              headline: copy.headline, source: process.env.CARD_HANDLE || "", sparkline, candles, level,
+              headline: copy.headline, source: process.env.CARD_HANDLE || "", sparkline, candles: cardCandles, level,
             })
           : buildAlertCardSvg({
               symbol: `$${alert.symbol}`, price: alert.price,
@@ -3726,7 +3778,7 @@ async function runAlertsMode() {
               low: Number.isFinite(alert.low24h) ? alert.low24h : null,
               high: Number.isFinite(alert.high24h) ? alert.high24h : null,
               windowLabel: `${win.hours}h range`, headline: copy.headline, source: process.env.CARD_HANDLE || "",
-              sparkline, candles, sparklineLabel: `${win.hours}h`, level,
+              sparkline, candles: cardCandles, sparklineLabel: `${win.hours}h`, level,
             });
         alertCard = { svg, win, closes };
       } catch (cardErr) {

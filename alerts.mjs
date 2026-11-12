@@ -40,6 +40,7 @@ export const DEFAULT_ALERT_CFG = {
   coinCooldownMin: 45,     // one alert per coin per this many minutes
   levelRepeatHours: 6,     // same coin+level+direction not repeated within
   moveRepeatHours: 12,     // same coin+direction move alert not repeated within
+  levelMarginPct: 0.15,    // v11.5: a level cross must be clean: both the old and new price this far past the level (0 = old behaviour)
 };
 
 // ---------------------------------------------------------------- levels --
@@ -66,6 +67,69 @@ export function levelsCrossed(from, to, step) {
     if (out.length > 50) break; // absurd gap; the caller only needs the nearest
   }
   return out;
+}
+
+// ------------------------------------------------------------ context ----
+
+// AP-style short date, UTC: "Oct. 14", "March 3".
+const MONTHS = ["Jan.", "Feb.", "March", "April", "May", "June", "July", "Aug.", "Sept.", "Oct.", "Nov.", "Dec."];
+export function fmtShortDate(ms) {
+  const d = new Date(ms);
+  return `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}`;
+}
+
+// "Lowest since Oct. 14": the last time the price was already this low (for a
+// fall) or this high (for a rise), from hourly candles. Returns null when
+// there is nothing worth saying (history too short, or the answer is just
+// "earlier today"). The last two candles are skipped because they contain the
+// move itself.
+export function contextFromCandles({ price, dir, candles, nowMs, minGapHours = 24, minSpanHours = 72 }) {
+  if (!Array.isArray(candles) || candles.length < 12 || !(price > 0) || (dir !== "up" && dir !== "down")) return null;
+  const valid = candles.filter((c) => Number.isFinite(c.openTime) && Number.isFinite(c.high) && Number.isFinite(c.low));
+  if (valid.length < 12) return null;
+  const spanHours = (nowMs - valid[0].openTime) / 3_600_000;
+  if (spanHours < minSpanHours) return null;
+  const past = valid.slice(0, -2);
+  for (let i = past.length - 1; i >= 0; i--) {
+    const hit = dir === "down" ? past[i].low <= price : past[i].high >= price;
+    if (!hit) continue;
+    const t = past[i].openTime + 3_600_000; // the candle's close
+    if (nowMs - t < minGapHours * 3_600_000) return null; // "lowest since this morning" is not news
+    return { kind: "since", date: fmtShortDate(t), text: `${dir === "down" ? "lowest" : "highest"} since ${fmtShortDate(t)}` };
+  }
+  const days = Math.floor(spanHours / 24);
+  return { kind: "window", days, text: `${dir === "down" ? "lowest" : "highest"} in at least ${days} days` };
+}
+
+// ------------------------------------------------- second price source ----
+
+// CoinGecko ids for the default watchlist. A coin not listed is simply not
+// cross-checked.
+export const COINGECKO_IDS = {
+  BTC: "bitcoin", ETH: "ethereum", BNB: "binancecoin", SOL: "solana", XRP: "ripple",
+  ADA: "cardano", DOGE: "dogecoin", LINK: "chainlink", AVAX: "avalanche-2", DOT: "polkadot",
+  TRX: "tron", LTC: "litecoin", MATIC: "matic-network", TON: "the-open-network", SHIB: "shiba-inu",
+};
+
+// v11.5: the alert card's chart. The glowing line is the default; candlesticks
+// are opt-in with ALERT_CHART_STYLE=candles.
+export function alertChartStyle(value) {
+  return /^candles?$/i.test(String(value ?? "").trim()) ? "candles" : "line";
+}
+
+export function priceDivergencePct(a, b) {
+  if (!(a > 0) || !(b > 0)) return NaN;
+  return (Math.abs(a - b) / ((a + b) / 2)) * 100;
+}
+
+// A second source disagreeing by more than tolerancePct means one of the two
+// is wrong (a bad tick, a thin pair), and a wrong "falls below $83,000" is
+// worse than a missed alert. No second price at all means "unchecked", which
+// passes: the check must never be a reason alerts stop working.
+export function crossCheckVerdict({ price, other, tolerancePct = 2 }) {
+  if (!Number.isFinite(other) || !(other > 0)) return { ok: true, checked: false, note: "second source unavailable, alert not cross-checked" };
+  const divergencePct = priceDivergencePct(price, other);
+  return { ok: divergencePct <= tolerancePct, checked: true, other, divergencePct };
 }
 
 // ------------------------------------------------------------ formatting --
@@ -102,12 +166,21 @@ export function detectAlerts({ snapshots, fired = [], nowMs, lookbackMin = 30, c
     const base = { symbol: s.symbol, name, price: s.price, start: s.start, change24h: s.change24h, high24h: s.high24h, low24h: s.low24h, lookbackMin };
 
     // --- level crossing
+    // v11.5: a cross only counts when it is clean. Both the price 30 minutes
+    // ago and the price now must sit at least levelMarginPct beyond the level,
+    // so a coin drifting from $740.01 to $739.98 no longer "falls below $740".
     if (s.start > 0) {
       const step = niceStep(s.price, c.levelPct);
       const crossed = levelsCrossed(s.start, s.price, step);
-      if (crossed.length) {
-        const dir = s.price > s.start ? "up" : "down";
-        const level = dir === "up" ? crossed[crossed.length - 1] : crossed[0];
+      const dir = s.price > s.start ? "up" : "down";
+      const m = Math.max(0, Number(c.levelMarginPct) || 0) / 100;
+      const clean = (L) => (dir === "up"
+        ? s.start <= L * (1 - m) && s.price >= L * (1 + m)
+        : s.start >= L * (1 + m) && s.price <= L * (1 - m));
+      // nearest to the current price first
+      const ordered = dir === "up" ? [...crossed].reverse() : crossed;
+      const level = ordered.find(clean);
+      if (level != null) {
         const id = `${s.symbol}:level:${dir}:${level}`;
         const repeat = mine.some((f) => f.kind === "level" && f.dir === dir && f.level === level && nowMs - f.at < c.levelRepeatHours * 3_600_000);
         if (!repeat) {
@@ -147,9 +220,12 @@ export function alertFacts(a) {
   if (Number.isFinite(a.change24h)) lines.push(`24h change: ${signedPct(a.change24h)}`);
   if (Number.isFinite(a.high24h)) lines.push(`24h high: ${fmtUsd(a.high24h)}`);
   if (Number.isFinite(a.low24h)) lines.push(`24h low: ${fmtUsd(a.low24h)}`);
+  if (a.context && a.context.text) lines.push(`Context: ${a.name} is at its ${a.context.text} (hourly Binance candles)`);
   lines.push("Data source: Binance spot market");
   return lines.join("\n");
 }
+
+import { STYLE_GUIDE } from "./style.mjs";
 
 export function buildAlertPrompt(a) {
   return [
@@ -161,7 +237,9 @@ export function buildAlertPrompt(a) {
     "",
     "Write exactly two lines:",
     "HEADLINE: one plain sentence (max 120 characters) stating what happened, with the price level or move and the current price.",
-    "CONTEXT: one short sentence (max 140 characters) using another figure from the data (24h change, high or low), or the single word NONE.",
+    "CONTEXT: one short sentence (max 140 characters). If the data has a Context line, state it (e.g. \"It is the lowest since Oct. 14.\"). Otherwise use another figure from the data (24h change, high or low), or the single word NONE.",
+    "",
+    ...STYLE_GUIDE,
     "",
     "Rules:",
     "- Never add numbers, names or claims that are not in the data. Round nothing; copy figures exactly as written.",
@@ -184,6 +262,7 @@ export function buildAlertTemplate(a) {
     headline = `${a.name} is ${a.dir} ${pct1(a.change24h)} in 24 hours, now at ${fmtUsd(a.price)}`;
   }
   const parts = [];
+  if (a.context && a.context.text) parts.push(`${a.context.text[0].toUpperCase()}${a.context.text.slice(1)}`);
   if (a.kind === "level" && Number.isFinite(a.change24h)) parts.push(`24h change ${signedPct(a.change24h)}`);
   if (Number.isFinite(a.low24h) && Number.isFinite(a.high24h)) parts.push(`24h range ${fmtUsd(a.low24h)} to ${fmtUsd(a.high24h)}`);
   return { headline, context: parts.length ? parts.join("; ") + "." : null };
@@ -299,6 +378,12 @@ export function alertsToday(state, nowMs) {
 export function extremeMove(alert, { movePct = 8, flashPct = 3 } = {}) {
   const day = Number.isFinite(alert?.change24h) ? alert.change24h : NaN;
   const fast = alert?.start > 0 && alert?.price > 0 ? ((alert.price - alert.start) / alert.start) * 100 : NaN;
+  // v11.5: a "move" alert's headline is about the 24h change, so when that
+  // change is itself extreme the card's hero number must say the same thing
+  // (it used to show a 30-minute flash figure under a 24h headline).
+  if (alert?.kind === "move" && Number.isFinite(day) && Math.abs(day) >= movePct) {
+    return { extreme: true, dir: day < 0 ? "down" : "up", pct: day, label: "in 24h" };
+  }
   if (Number.isFinite(fast) && Math.abs(fast) >= flashPct) {
     return { extreme: true, dir: fast < 0 ? "down" : "up", pct: fast, label: `in ${alert.lookbackMin || 30} min` };
   }

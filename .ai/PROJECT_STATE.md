@@ -1,6 +1,6 @@
 # The Tape (square-autoposter): project state
 
-**Version:** v11.10 (operating-loop pass)  |  **Tests:** 521/521 passing (`node --test`; 17 skip without `@resvg/resvg-js`)
+**Version:** v11.10 (operating-loop pass)  |  **Tests:** 521/521 passing (`node --test`; 17 skip without `@resvg/resvg-js`)  |  **Pushed:** yes (`bdec584`, then this state update)
 
 ## What it is
 Binance Square auto-poster: news, price alerts, research/education, weekly AI article. Telegram approval flow, branded image cards (SVG -> PNG), git-shared state in `news-state/`.
@@ -24,10 +24,11 @@ GitHub `main`. Commit local changes from the PC with `save-and-push.bat`; do not
 4. Optional, after the above: market-breadth data topic; real second sources for single-source topics; monthly provider health check.
 
 ## Open items (yours)
-1. Push this tree from the PC with `save-and-push.bat`, then `node check-sync.mjs` on both machines.
+1. Push is DONE (v11.10 is on `origin/main`). If a push is rejected again: the bot commits a claim to `main` on every story, so `save-and-push.bat` now does `git pull --rebase` first. Never force.
 2. Close the ~70 empty Competitor Research issues by hand.
-3. On the PC add `NEWS_FEEDS_OFF=CryptoSlate` to `.env` (HTTP 403 there).
-4. Decide the goal: audience growth vs. a reliable personal wire. The next month differs a lot between the two.
+3. On the PC add `NEWS_FEEDS_OFF=CryptoSlate` to `.env` (HTTP 403 there), and make sure `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` are in `.env` too (the PC reads `.env`, not repo secrets).
+4. Confirm the GitHub runner asks for approval: trigger `news-post.yml` once with dry_run off and check the tap arrives.
+5. Decide the goal: audience growth vs. a reliable personal wire. The next month differs a lot between the two.
 
 ## Resume
 Say "Continue", read this file and `git log -5`, then start the next unchecked item.

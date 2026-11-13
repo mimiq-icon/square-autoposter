@@ -268,10 +268,13 @@ export function buildAlertTemplate(a) {
   return { headline, context: parts.length ? parts.join("; ") + "." : null };
 }
 
-export function assembleAlertPost({ alert, headline, context, disclaimer = "", hashtags = [] }) {
+export function assembleAlertPost({ alert, headline, context, disclaimer = "", hashtags = [], cta = "" }) {
   const lead = alert.dir === "down" ? "🔻" : "🔺";
   const lines = [`${lead} ${headline}`];
   if (context) lines.push("", context);
+  // v11.11: one fixed question, before the disclaimer (see appendCta in
+  // post.mjs for why the question is back on market posts).
+  if (cta) lines.push("", cta);
   if (disclaimer) lines.push("", disclaimer);
   lines.push(["$" + alert.symbol, ...hashtags.slice(0, 2)].join(" "));
   return lines.join("\n");

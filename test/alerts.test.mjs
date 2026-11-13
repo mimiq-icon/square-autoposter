@@ -121,6 +121,14 @@ describe("assembleAlertPost", () => {
   test("works without context or disclaimer", () => {
     assert.equal(assembleAlertPost({ alert: a, headline: "H", context: null, hashtags: [] }), "🔻 H\n$BTC");
   });
+  test("v11.11: an optional question sits before the disclaimer", () => {
+    const t = assembleAlertPost({ alert: a, headline: "H", context: "C.", disclaimer: "Not financial advice.", hashtags: ["#Bitcoin"], cta: "What's your read on $BTC today?" });
+    assert.equal(t, "🔻 H\n\nC.\n\nWhat's your read on $BTC today?\n\nNot financial advice.\n$BTC #Bitcoin");
+  });
+  test("no cta -> byte-identical to before", () => {
+    const t = assembleAlertPost({ alert: a, headline: "H", context: "C.", disclaimer: "Not financial advice.", hashtags: ["#Bitcoin"] });
+    assert.equal(t, "🔻 H\n\nC.\n\nNot financial advice.\n$BTC #Bitcoin");
+  });
 });
 
 describe("buildPriceChartConfig", () => {

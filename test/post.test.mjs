@@ -42,6 +42,10 @@ import {
   buildOAuth1Header,
   buildQuickChartPreviewUrl,
   buildDailyChangeChartConfig,
+  appendCta,
+  buildCtaLine,
+  resolveDailyCta,
+  DAILY_ROTATION,
   buildDraftIssueBody,
   parseDraftIssue,
 } from "../post.mjs";
@@ -486,6 +490,64 @@ describe("buildDailyChangeChartConfig: the image matches the text", () => {
   test("caps at three bars even when the post names more", () => {
     const cfg = buildDailyChangeChartConfig(data, 3, "$BTC $ETH $BNB $SOL $XRP", []);
     assert.equal(labels(cfg).length, 3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v11.11: the closing question is back on market posts only. The live account
+// showed the daily posts that asked something got 163-915 views and the one
+// that did not got 135. The AI still writes no questions; this is one fixed
+// line added after validation, like the hashtags.
+// ---------------------------------------------------------------------------
+describe("appendCta: one fixed question, market posts only", () => {
+  const single = "\uD83D\uDD26 Market Spotlight: $ARB (Arbitrum)\nRank #58, down 13.00% in 24h.\n\nNot financial advice.";
+  const multi = "Snapshot\n$ADA $DOGE $LINK\n\nNot financial advice.";
+
+  test("one coin -> asks for a read on that coin", () => {
+    assert.equal(buildCtaLine("$ARB fell 13%"), "What's your read on $ARB today?");
+    assert.match(appendCta(single), /What's your read on \$ARB today\?/);
+  });
+
+  test("several coins -> asks which one they are watching", () => {
+    assert.equal(buildCtaLine("$ADA $DOGE $LINK"), "Which one are you watching?");
+    assert.match(appendCta(multi), /Which one are you watching\?/);
+  });
+
+  test("the question sits before the disclaimer, never after it", () => {
+    const out = appendCta(single);
+    assert.ok(out.indexOf("What's your read") < out.indexOf("Not financial advice"));
+    assert.match(out, /\?\n\nNot financial advice\.$/);
+  });
+
+  test("no cashtag -> no question (nothing to ask about)", () => {
+    const t = "A quiet market.\n\nNot financial advice.";
+    assert.equal(appendCta(t), t);
+  });
+
+  test("DAILY_CTA=off leaves the text byte-identical", () => {
+    assert.equal(appendCta(single, { enabled: false }), single);
+    assert.equal(resolveDailyCta("off"), false);
+    assert.equal(resolveDailyCta("none"), false);
+    assert.equal(resolveDailyCta(undefined), true);
+    assert.equal(resolveDailyCta("on"), true);
+  });
+
+  test("a post with no disclaimer still gets the question, at the end", () => {
+    assert.match(appendCta("$BTC moved."), /\$BTC moved\.\n\nWhat's your read on \$BTC today\?$/);
+  });
+});
+
+describe("DAILY_ROTATION: weighted to the formats that earned reach", () => {
+  test("still coprime with the 5 vibes, so the pairing cycle does not lockstep", () => {
+    assert.equal(DAILY_ROTATION.length, 9);
+    assert.equal(9 % 5, 4);
+  });
+  test("educational is out of the daily rotation (the research desk owns it)", () => {
+    assert.ok(!DAILY_ROTATION.includes("educational"));
+  });
+  test("mover and spotlight each appear twice", () => {
+    assert.equal(DAILY_ROTATION.filter((s) => s === "mover").length, 2);
+    assert.equal(DAILY_ROTATION.filter((s) => s === "spotlight").length, 2);
   });
 });
 

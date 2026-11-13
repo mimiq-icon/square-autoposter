@@ -1,6 +1,6 @@
 # The Tape (square-autoposter): project state
 
-**Version:** v11.10 (operating-loop pass)  |  **Tests:** 521/521 passing (`node --test`; 17 skip without `@resvg/resvg-js`)  |  **Pushed:** yes — `origin/main` is in sync; check `git log -1` for the tip
+**Version:** v11.11 (live-account evidence pass)  |  **Tests:** 521/521 passing (`node --test`; 17 skip without `@resvg/resvg-js`)  |  **Pushed:** yes — `origin/main` is in sync; check `git log -1` for the tip
 
 ## What it is
 Binance Square auto-poster: news, price alerts, research/education, weekly AI article. Telegram approval flow, branded image cards (SVG -> PNG), git-shared state in `news-state/`.
@@ -8,7 +8,14 @@ Binance Square auto-poster: news, price alerts, research/education, weekly AI ar
 ## Source of truth
 GitHub `main`. Commit local changes from the PC with `save-and-push.bat`; do not upload zips through the GitHub web UI (it flattens folders and has broken the suite twice).
 
-## Done this pass (v11.10)
+## Done this pass (v11.11)
+- **Chart matched to the post.** `buildDailyChangeChartConfig(data, dayIndex, text, extra)` charts the coins the post names (2-3 of them, text order), returns null for one coin or no data, falls back to the watchlist only when the post has no cashtags. 6 of 7 live daily posts had a chart of unrelated coins before this.
+- **Closing question back on market posts only.** `appendCta` / `buildCtaLine` / `resolveDailyCta`; `DAILY_CTA=off` disables. Added after validation, before hashtags; alerts get it via `assembleAlertPost({ cta })`. News and research never.
+- **Rotation weighted:** `DAILY_ROTATION = [macro, spotlight, snapshot, mover, spotlight, snapshot, trending, digest, mover]` — educational out (lowest reach; research desk owns it), mover/spotlight twice each.
+- **`score-post.bat` / `score-post.ps1`** append a CSV-escaped row to `scorecard.csv`.
+- 539 tests, 0 fail, 0 skipped (with `@resvg/resvg-js` installed — that is the CI gate).
+
+## Done in v11.10
 - `news-post.yml` + `alert-post.yml` now pass `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` (the secrets existed but the job could not see them, so the hourly runner posted sensitive stories without asking).
 - Research has a mechanical fallback: `buildResearchTemplateCopies()` (concept notes for education, fact text for data topics), validated candidate by candidate; `provider=template`. Article drops the duplicate "idea, step by step" section and a notes-only post credits no source.
 - `what-is-tvl` pointed at the live "Decentralized finance" Wikipedia article; `what-is-a-layer-2` is now `notesOnly` (both old wiki titles 404 permanently).

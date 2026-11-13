@@ -2,6 +2,16 @@
 
 Reconstructed from the version-tagged comments already in `post.mjs` and `scan.mjs` (every change in this codebase has always been commented in place with a `vN` marker) plus this pass's own work. If you're looking for *why* a particular line exists, search the source for its version tag first — the reasoning usually lives right there.
 
+## v11.11 (the live account's own numbers, and the chart that lied)
+
+First pass driven by the account's real posts rather than by the code. Two findings, one bug, one deliberate reversal.
+
+- **The chart contradicted the text on 6 of 7 daily posts.** `buildDailyChangeChartConfig` rotated the 8-coin watchlist independently of the post, so a post about `$ARB` shipped with a chart of `$BNB/$SOL/$XRP`, a `$TIA/$INJ` post with `$DOGE/$LINK/$BTC`, and so on. On a platform where the image is the thumbnail, that is the loudest possible "this is a bot" signal. The chart now takes the post text: 2-3 named coins with data are charted in the order they appear, a single named coin (or none we have numbers for) gets **no chart at all**, and only a post with no cashtags falls back to the watchlist rotation. `broadMovers` is passed in, so a top-100 mover outside the watchlist still gets its own bar.
+- **The closing question is back, on market posts only.** v11.5 removed every question as the most recognisable machine-written habit. The live account then showed the opposite: daily posts that asked something got 163-915 views, the one that did not got 135. (Likes stayed at 0-2 either way, so this buys distribution, not affection — the scorecard is how that gets judged.) The compromise: the AI still writes no questions and the linter still rejects them, so the body stays wire copy; one fixed, human-written question is appended at assembly time, after validation, exactly like the hashtags. `DAILY_CTA=off` restores the old behaviour. News and research never get one.
+- **The daily rotation is weighted to what earned reach.** `educational` is out (the concept post was the lowest-reach daily format, and the research desk already covers education twice a week); `mover` and `spotlight` now appear twice each in the 9-entry rotation, which stays coprime with the 5 vibes so the pairing cycle does not lockstep.
+- **`score-post.bat` / `score-post.ps1`.** Prompts for date, format, title, views, likes, comments, follows and notes, and appends a properly escaped row to `scorecard.csv`. The bot cannot read views or likes, so this is the only path to an evidence-based format decision; the tool just makes it 15 seconds instead of a text editor.
+- 539 tests (was 528): the chart matching (7), the CTA (5), the rotation invariants (3), and the alert assembly with and without a question (2). The alerts e2e now counts *unique* coins rather than occurrences, because the question repeats the coin.
+
 ## v11.10 (operating-loop pass: the live path, the packaging, the fallback)
 
 This pass did not add a format. It closed the gaps `STRATEGY.md` itself named, and fixed the things the last uploaded snapshot broke.

@@ -2,7 +2,7 @@
 
 Your Windows 11 PC (i5-8365U, 8 GB RAM, no GPU) is plenty for this. The PC checks the news feeds every ~2.5 minutes and writes posts with a small local AI model. GitHub keeps running hourly in the background, so **the PC does not need to be on 24/7**; when it's off or asleep, GitHub carries on.
 
-Before you start, you need these in the repo (clone the repo or commit from the PC with `save-and-push.bat` — do not upload a zip through the GitHub web page; see CHANGELOG.md for what each version added): `post.mjs`, `news.mjs`, `cards.mjs`, `research.mjs`, `alerts.mjs`, `article.mjs`, `style.mjs`, `news-sync.mjs`, `telegram.mjs`, `local-runner.mjs`, `check-sync.mjs`, `run-mode.mjs`, `make-avatar.mjs`, `preview-cards.mjs`, `brand/` (logo and bundled fonts), `test-support/`, `start-news.bat`, `check-sync.bat`, `save-and-push.bat`, `dry-run-all.bat`, `dry-run-all.ps1`, `scorecard.csv`, `.env.example`, `.gitignore`, and the `.github/workflows/` folder.
+Before you start, you need these in the repo (clone the repo or commit from the PC with `save-and-push.bat` — do not upload a zip through the GitHub web page; see CHANGELOG.md for what each version added): `post.mjs`, `news.mjs`, `cards.mjs`, `research.mjs`, `alerts.mjs`, `article.mjs`, `style.mjs`, `news-sync.mjs`, `telegram.mjs`, `local-runner.mjs`, `check-sync.mjs`, `run-mode.mjs`, `make-avatar.mjs`, `preview-cards.mjs`, `brand/` (logo and bundled fonts), `test-support/`, `start-news.bat`, `check-sync.bat`, `save-and-push.bat`, `score-post.bat`, `score-post.ps1`, `dry-run-all.bat`, `dry-run-all.ps1`, `scorecard.csv`, `.env.example`, `.gitignore`, and the `.github/workflows/` folder.
 
 The PC runner also checks prices for **alerts** ("Bitcoin falls below $83,000") in the same cycle, and every alert can wait for your Telegram tap (set the `TELEGRAM_*` values in `.env`; `ALERT_APPROVAL=off` posts them automatically). If a coin just moved sharply, that cycle takes a few seconds longer.
 
@@ -129,6 +129,8 @@ The runner prints the same line every time it starts (`code: ...`).
 ## The weekly scorecard (`scorecard.csv`)
 
 Once posts are going out, add one row per post: date, format, title, views, likes, comments, follows, notes. The bot cannot see views or likes, so this file is the only way a format decision ever gets made on evidence rather than taste. After about 20 rows, keep the formats that earn attention and cut or merge the rest.
+
+Double-click **`score-post.bat`** to do it: it prompts for each field (format is a number, 1-8), appends the row, and tells you how many rows you have. About 15 seconds per post. It cannot read your dashboard for you — that part is unavoidably manual.
 
 ## Dry-run EVERYTHING on the PC
 

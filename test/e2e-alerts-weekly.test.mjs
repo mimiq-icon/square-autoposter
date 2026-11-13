@@ -54,7 +54,9 @@ test("alerts 1: a quiet level cross posts once, text-only, with AI text, disclai
   check("exactly one Square post", posts(w).length === 1, `got ${posts(w).length}\n${r.out.slice(-700)}`);
   const text = JSON.parse(posts(w)[0].slice(7));
   check("AI headline used", text.includes("🔻 Bitcoin drops below $83,000 and now trades at $82,700"), text);
-  check("one cashtag, hashtags ≤2", (text.match(/\$[A-Z]{2,6}\b/g) || []).length === 1 && (text.match(/#\w+/g) || []).length <= 2 && /\$BTC #Bitcoin/.test(text), text);
+  // v11.11: the closing question repeats the coin ("What's your read on $BTC
+  // today?"), so the rule is one *unique* coin, not one occurrence.
+  check("one coin, hashtags ≤2", new Set(text.match(/\$[A-Z]{2,6}\b/g) || []).size === 1 && (text.match(/#\w+/g) || []).length <= 2 && /\$BTC #Bitcoin/.test(text), text);
   check("has a disclaimer line", /advice|DYOR|research/i.test(text), text);
   check("no image on a quiet level cross (images are for extreme moves)", lines(w, "IMAGELIST").length === 0, r.out.slice(-500));
   const st = w.remoteAlerts();

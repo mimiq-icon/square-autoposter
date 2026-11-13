@@ -970,6 +970,51 @@ function appendHashtags(text) {
   return `${text} ${hashtags.join(" ")}`;
 }
 
+// ---------------------------------------------------------------------------
+// v11.11: the closing question, brought back for market posts only.
+//
+// v11.5 removed every question because it is the most recognisable
+// machine-written habit. The live account then showed the opposite: the daily
+// posts that asked something got 163-915 views, the one that did not got 135.
+// (Likes stayed at 0-2 either way, so this buys distribution, not affection.)
+//
+// The compromise: the AI still writes no questions and the linter still
+// rejects them, so the body stays wire copy. One fixed, human-written question
+// is appended at assembly time, after validation, exactly like the hashtags.
+// News and research never get one. DAILY_CTA=off turns it off.
+// ---------------------------------------------------------------------------
+export function resolveDailyCta(value) {
+  const v = String(value ?? "").trim().toLowerCase();
+  return !["off", "none", "false", "no", "0"].includes(v);
+}
+
+// One coin -> ask for a read on it. Several -> ask which one they are watching.
+// No cashtag at all -> no question (there is nothing to ask about).
+export function buildCtaLine(text) {
+  const symbols = [...new Set(countCashtags(String(text || "")).map((t) => t.slice(1)))];
+  if (symbols.length === 0) return null;
+  if (symbols.length === 1) return `What's your read on $${symbols[0]} today?`;
+  return "Which one are you watching?";
+}
+
+// Insert the question as its own paragraph just before the disclaimer, so the
+// disclaimer stays the last thing a reader sees (and the hashtags still attach
+// to it). If no disclaimer line is found, append at the end.
+export function appendCta(text, { enabled = true } = {}) {
+  if (!enabled) return text;
+  const cta = buildCtaLine(text);
+  if (!cta) return text;
+  const lines = String(text).split("\n");
+  let last = lines.length - 1;
+  while (last >= 0 && !lines[last].trim()) last--;
+  const isDisclaimer = last >= 0 && /financial advice|do your own research|\bDYOR\b/i.test(lines[last]);
+  if (isDisclaimer) {
+    lines.splice(last, 0, cta, "");
+    return lines.join("\n");
+  }
+  return `${text}\n\n${cta}`;
+}
+
 // v5.6: Vibe adherence check. The diagnostic showed the model silently
 // dropping the vibe instruction (told Range Watcher, wrote a 7d comparison
 // with zero range content). Nothing validated whether the vibe was actually
@@ -1435,6 +1480,10 @@ async function callAiWithFallback(prompt, allowedSymbols, vibeName) {
 // isSafeAiText() requires the output to contain "dyor" or "not financial
 // advice" (case-insensitive) — every variant below satisfies that check, so
 // this doesn't loosen the compliance gate at all, just varies its wording.
+// v11.11: see the rotation comment in runDailyMode. Exported for the test that
+// keeps it coprime with the vibe count and free of "educational".
+export const DAILY_ROTATION = ["macro", "spotlight", "snapshot", "mover", "spotlight", "snapshot", "trending", "digest", "mover"];
+
 const DISCLAIMER_VARIANTS = [
   "Not financial advice.",
   "Not financial advice. Do your own research.",
@@ -3782,7 +3831,11 @@ async function runAlertsMode() {
     const customDisclaimer = resolveNewsDisclaimer(process.env.ALERT_DISCLAIMER ?? process.env.NEWS_DISCLAIMER);
     const wasCustom = String(process.env.ALERT_DISCLAIMER ?? process.env.NEWS_DISCLAIMER ?? "").trim() !== "" && customDisclaimer !== "";
     const disclaimer = wasCustom ? customDisclaimer : pickNewsDisclaimer(Math.floor(nowMs / 3600000));
-    const text = assembleAlertPost({ alert, headline: copy.headline, context: copy.context, disclaimer, hashtags: pickHashtags(`$${alert.symbol}`) });
+    const text = assembleAlertPost({
+      alert, headline: copy.headline, context: copy.context, disclaimer,
+      hashtags: pickHashtags(`$${alert.symbol}`),
+      cta: resolveDailyCta(process.env.DAILY_CTA) ? buildCtaLine(`$${alert.symbol}`) : "",
+    });
     console.log(`\n--- Alert preview (${provider ? `ai: ${provider}` : "template"}) ---\n${text}\n--------------------`);
 
     // ---- image decision + card (v11.3: built BEFORE asking, so Telegram shows it) ----
@@ -4333,7 +4386,12 @@ async function main() {
     // v9: Extended to 9 entries to add "digest" and "spotlight" — 9 is still
     // coprime with 5 (gcd(9,5)=1), so the full vibe×template cycle grows to
     // 45 days instead of shrinking back toward lockstep.
-    const rotation = ["macro", "trending", "snapshot", "mover", "educational", "snapshot", "trending", "digest", "spotlight"];
+    // v11.11: weighted toward the formats the live account actually earned
+    // reach with (big movers), and "educational" is out of the daily rotation —
+    // the concept post was the lowest-reach daily format (135 views) and the
+    // research desk already covers education twice a week. Still 9 entries, so
+    // it stays coprime with the 5 vibes (45-day cycle).
+    const rotation = DAILY_ROTATION;
     style = rotation[dayIndex % rotation.length];
     console.log(`  Decision: no anomaly/extreme sentiment, day ${dayIndex} → rotation "${style}".`);
   }
@@ -4382,6 +4440,9 @@ async function main() {
   // v9.4: attach topic hashtags now that `text` is fully resolved (whichever
   // path produced it). See appendHashtags() for why this happens here rather
   // than inside each template/AI path individually.
+  // v11.11: the closing question goes in before the hashtags, so the hashtags
+  // still attach to the disclaimer line (see appendHashtags).
+  text = appendCta(text, { enabled: resolveDailyCta(process.env.DAILY_CTA) });
   text = appendHashtags(text);
 
   console.log(`\n--- Post preview (source: ${source}) ---`);

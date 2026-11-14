@@ -6,6 +6,8 @@ A review of the whole desk as a strategist, operator and quality reviewer would 
 
 **v11.11 update.** The first real numbers from the live account (section 4b). They reversed one v11.5 decision (the closing question is back, market posts only) and exposed a defect no dry run could: the chart contradicted the post on 6 of 7 daily posts. The measurement item below is still the one that matters, because 915 views and 0 likes says the missing piece is not copy.
 
+**v11.12 correction.** Section 4b's first finding does not hold up on its own table: the `$SOL/$XRP bounce` post asked a question and got 133 views, below the 135 of the one post that did not; that post was a concept explainer (a different, lower-reach format); and the best posts were the biggest moves. One control post of a different format cannot say whether the question matters. The question stays on by default, but `DAILY_CTA=alternate` plus `score-report.bat` now run it as a test: it needs 8 posts per arm before it will say anything. Until then, treat "the question earns reach" as unproven, not as a finding.
+
 ## 1. What this is
 
 An automated Binance Square desk, "The Tape": breaking news, price alerts, a daily market post, short education explainers, a weekly data post, a monthly long-form article and a weekly recap. One person approves everything on Telegram. No budget: free API tiers, free GitHub Actions minutes, one Windows PC.

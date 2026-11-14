@@ -62,7 +62,7 @@ Model overrides (all optional, sane defaults baked in): `GROQ_MODEL`, `OPENROUTE
 
 Diagnostics: `DRY_RUN=true` (print, don't post — covers every code path, including image upload), `DAY_INDEX_OVERRIDE=<1-31>` (test a specific vibe/template rotation on demand).
 
-Market-post voice: `DAILY_CTA` (default `on`) adds the fixed closing question to daily posts and price alerts; `off` restores the v11.5 behaviour of ending on a fact. The AI-written body is question-free either way — the question is added after validation, exactly like the hashtags, so it can never carry an invented claim. News posts keep no call to action at all.
+Market-post voice: `DAILY_CTA` (default `on`) adds the fixed closing question to daily posts and price alerts; `off` restores the v11.5 behaviour of ending on a fact; `alternate` asks on even UTC days only, so the question can be tested instead of assumed (see `score-report.bat`). The AI-written body is question-free either way — the question is added after validation, exactly like the hashtags, so it can never carry an invented claim. News posts keep no call to action at all.
 
 ### Breaking-news mode: tuning and limits
 
@@ -108,6 +108,7 @@ Things to know:
 
 - `save-and-push.bat`: commit this folder, pull-and-rebase, then push. Use this instead of uploading a zip through the GitHub web page — a zip flattens the folder, which is how duplicate test files once turned the suite red. It is safe to run any time.
 - `node check-sync.mjs` (or double-click `check-sync.bat`): is this PC's code identical to GitHub's?
+- `score-report.bat`: reads `scorecard.csv` and shows median views and likes per format, and (with `DAILY_CTA=alternate` and the date it started) whether posts that end on a question really earn more reach than posts that end on a fact. It refuses to conclude on fewer than 8 posts per arm.
 - `score-post.bat`: add one row to `scorecard.csv` (date, format, title, views, likes, comments, follows, notes). The bot cannot see views or likes; this is how format decisions get made on evidence.
 - `node run-mode.mjs <mode>`: run any part of the bot with your `.env` loaded, dry by default (`node run-mode.mjs list`).
 - `dry-run-all.bat`: dry-run everything and get an OK/PROBLEM table. Details in PC-SETUP.md.

@@ -982,9 +982,28 @@ function appendHashtags(text) {
 // rejects them, so the body stays wire copy. One fixed, human-written question
 // is appended at assembly time, after validation, exactly like the hashtags.
 // News and research never get one. DAILY_CTA=off turns it off.
+//
+// v11.12: that claim does not survive its own table. The $SOL/$XRP post asked
+// "Which dip are you watching?" and got 133 views, below the 135 of the one post
+// that did not ask; the only no-question daily post was a concept explainer (the
+// lowest-reach format); and the top posts were the biggest moves (\u221213%,
+// \u221210%, a 25% ETF crash), so the topic may be doing all the work. So the
+// question stays on by default, but it can now be TESTED:
+// DAILY_CTA=alternate asks on even UTC days and not on odd ones, and
+// `node score-report.mjs` compares the two arms from scorecard.csv.
 // ---------------------------------------------------------------------------
-export function resolveDailyCta(value) {
+export function utcDayNumber(nowMs = Date.now()) {
+  return Math.floor(nowMs / 86_400_000);
+}
+
+// True on days the closing question is asked in "alternate" mode.
+export function ctaAsksOnDay(dayNumber) {
+  return dayNumber % 2 === 0;
+}
+
+export function resolveDailyCta(value, nowMs = Date.now()) {
   const v = String(value ?? "").trim().toLowerCase();
+  if (v === "alternate" || v === "alt" || v === "ab") return ctaAsksOnDay(utcDayNumber(nowMs));
   return !["off", "none", "false", "no", "0"].includes(v);
 }
 

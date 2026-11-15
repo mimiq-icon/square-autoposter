@@ -243,3 +243,22 @@ test("alerts 11: the BNB-style chatter (a cent past the level) posts nothing", {
   const loose = await run(pc, w.mocklog, "alerts", { MOCK_AI_TEXT: GOOD_ALERT, MOCK_BTC: "82980", MOCK_BTC_START: "83010", MOCK_BTC_CHG: "-0.3", ALERT_LEVEL_MARGIN_PCT: "0" });
   check("with the margin at 0 the old chatter alert comes back", loose.code === 0 && posts(w).length === 1, loose.out.slice(-500));
 });
+
+// ---------------- v11.12: DAILY_CTA=alternate through the real post.mjs ----------------
+
+test("alerts: DAILY_CTA=alternate asks on today's arm only (the other arm ends on the disclaimer); on and off unchanged", { skip: !hasGit, timeout: 240000 }, async () => {
+  const { ctaAsksOnDay, utcDayNumber } = await import("../post.mjs");
+  const asksToday = ctaAsksOnDay(utcDayNumber(Date.now()));
+  const question = /What's your read on \$BTC today\?/;
+  const textFor = async (cta) => {
+    const w = world(); const pc = w.clone("pc");
+    const r = await run(pc, w.mocklog, "alerts", { MOCK_AI_TEXT: GOOD_ALERT, ...(cta === undefined ? {} : { DAILY_CTA: cta }) });
+    check(`exit 0 and one post (DAILY_CTA=${cta})`, r.code === 0 && posts(w).length === 1, r.out.slice(-600));
+    return JSON.parse(posts(w)[0].slice(7));
+  };
+  const alt = await textFor("alternate");
+  check("alternate follows the UTC-day rule", question.test(alt) === asksToday, `asksToday=${asksToday}\n${alt}`);
+  check("default (unset) still asks", question.test(await textFor(undefined)), "default must remain on");
+  check("on still asks", question.test(await textFor("on")), "on");
+  check("off still does not", !question.test(await textFor("off")), "off");
+});

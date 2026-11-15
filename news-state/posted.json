@@ -1,21 +1,6 @@
 {
   "posted": [
     {
-      "title": "BlackRock Bitcoin ETF outflows hit $2B over nine sessions",
-      "link": "https://cointelegraph.com/markets/blackrock-bitcoin-etf-ibit-outflows-nine-day-streak?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
-      "source": "Cointelegraph",
-      "at": 1794481086632,
-      "status": "posted",
-      "etfFlow": "BTC"
-    },
-    {
-      "title": "Bitcoin ETFs Bleed $1.4B in Five Days as Investors Cut Risk",
-      "link": "https://decrypt.co/383122/bitcoin-etfs-bleed-1-4b-in-five-days-as-investors-cut-risk",
-      "source": "Decrypt",
-      "at": 1794489491965,
-      "status": "posted"
-    },
-    {
       "title": "JPMorgan Lifts Its Strategy (MSTR) Stake 36% and Holds $540 Million in Bitcoin ETFs",
       "link": "https://bitcoinmagazine.com/markets/jpmorgan-lifts-strategy-mstr-stake-36",
       "source": "Bitcoin Magazine",
@@ -70,6 +55,14 @@
       "source": "The Block",
       "at": 1794691542954,
       "status": "posted"
+    },
+    {
+      "title": "Bitcoin now looks cheap by one measure after $1 billion in ETF outflows",
+      "link": "https://cryptoslate.com/bitcoins-new-value-alert-still-needs-proof-that-buyers-can-absorb-supply/",
+      "source": "CryptoSlate",
+      "at": 1794762198775,
+      "status": "posted",
+      "etfFlow": "BTC"
     }
   ]
 }

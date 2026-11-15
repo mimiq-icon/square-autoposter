@@ -1,12 +1,19 @@
 # The Tape (square-autoposter): project state
 
-**Version:** v11.11 (live-account evidence pass)  |  **Tests:** 521/521 passing (`node --test`; 17 skip without `@resvg/resvg-js`)  |  **Pushed:** yes — `origin/main` is in sync; check `git log -1` for the tip
+**Version:** v11.12 (closing-question test, settings guard)  |  **Tests:** 575/575 passing (`node --test`; 17 skip without `@resvg/resvg-js`)  |  **Pushed:** yes — `origin/main` is in sync; check `git log -1` for the tip
 
 ## What it is
 Binance Square auto-poster: news, price alerts, research/education, weekly AI article. Telegram approval flow, branded image cards (SVG -> PNG), git-shared state in `news-state/`.
 
 ## Source of truth
 GitHub `main`. Commit local changes from the PC with `save-and-push.bat`; do not upload zips through the GitHub web UI (it flattens folders and has broken the suite twice).
+
+## Done this pass (v11.12)
+- Reviewed the v11.11 snapshot: 539/539 green, nothing from earlier stages lost, strays gone.
+- The v11.11 reversal (closing question back) rests on a table that contradicts it (133 views with a question vs 135 without; the control was a different format). Did NOT remove it: added `DAILY_CTA=alternate` (even UTC days ask) and `score-report.mjs`/`.bat` to test it from `scorecard.csv`. Needs 8 posts per arm.
+- `.env.example` had regressed to the stale 42-line v10 file (third time it has gone stale). Restored, 29 undocumented settings added, and `test/env-docs.test.mjs` now fails if any setting the code reads is undocumented.
+- Workflows now pass `vars.DAILY_CTA` (they passed no variables before).
+- To use: set `DAILY_CTA=alternate` as a GitHub repo VARIABLE, note the start date, run `score-report.bat` after a few weeks.
 
 ## Done this pass (v11.11)
 - **Chart matched to the post.** `buildDailyChangeChartConfig(data, dayIndex, text, extra)` charts the coins the post names (2-3 of them, text order), returns null for one coin or no data, falls back to the watchlist only when the post has no cashtags. 6 of 7 live daily posts had a chart of unrelated coins before this.

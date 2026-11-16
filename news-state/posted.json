@@ -1,13 +1,6 @@
 {
   "posted": [
     {
-      "title": "Tether-backed Twenty One Capital reports $1.09 billion Q3 net income on bitcoin gains",
-      "link": "https://www.theblock.co/news/business/2026-11-13-tether-backed-twenty-one-capital-reports-1-09-billion-q3-net-income-on-bitcoin-gains-439711",
-      "source": "The Block",
-      "at": 1794586554911,
-      "status": "posted"
-    },
-    {
       "title": "JPMorgan’s Bitcoin and Crypto-Linked Holdings Approach $1 Billion",
       "link": "https://decrypt.co/383267/jpmorgan-bitcoin-crypto-linked-holdings-approach-1-billion",
       "source": "Decrypt",
@@ -55,6 +48,13 @@
       "link": "https://cryptoslate.com/bitcoin-crashes-near-62000-over-weekend-as-crypto-liquidations-topped-1-8-billion/",
       "source": "CryptoSlate",
       "at": 1794821599213,
+      "status": "posted"
+    },
+    {
+      "title": "Bitcoin flashes false recovery warning as $64 billion futures frenzy masks weak demand",
+      "link": "https://cryptoslate.com/bitcoin-flashes-false-recovery-warning-as-64-billion-futures-frenzy-masks-weak-demand/",
+      "source": "CryptoSlate",
+      "at": 1794860641979,
       "status": "posted"
     }
   ]

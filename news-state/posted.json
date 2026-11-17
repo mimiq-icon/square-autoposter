@@ -1,20 +1,6 @@
 {
   "posted": [
     {
-      "title": "JPMorgan’s Bitcoin and Crypto-Linked Holdings Approach $1 Billion",
-      "link": "https://decrypt.co/383267/jpmorgan-bitcoin-crypto-linked-holdings-approach-1-billion",
-      "source": "Decrypt",
-      "at": 1794609284544,
-      "status": "posted"
-    },
-    {
-      "title": "Bitcoin ETFs shed $2.35B in 2 weeks, BlackRock’s losing streak hits 11",
-      "link": "https://cointelegraph.com/markets/bitcoin-etf-outflows-2-35-billion-blackrock-11-session-streak?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
-      "source": "Cointelegraph",
-      "at": 1794651742760,
-      "status": "posted"
-    },
-    {
       "title": "Bitcoin’s $67,000 crash puts $57 billion holder cluster at risk as ETF investors flee",
       "link": "https://cryptoslate.com/bitcoins-67000-crash-puts-57-billion-holder-cluster-at-risk-as-etf-investors-flee/",
       "source": "CryptoSlate",
@@ -56,6 +42,14 @@
       "source": "CryptoSlate",
       "at": 1794860641979,
       "status": "posted"
+    },
+    {
+      "title": "BlackRock’s Bitcoin ETF snaps $2.35B outflow streak amid extreme fear",
+      "link": "https://cointelegraph.com/markets/blackrock-ibit-outflow-streak-end-extreme-fear?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
+      "source": "Cointelegraph",
+      "at": 1794921299201,
+      "status": "posted",
+      "etfFlow": "BTC"
     }
   ]
 }

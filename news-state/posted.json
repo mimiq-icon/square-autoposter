@@ -1,20 +1,6 @@
 {
   "posted": [
     {
-      "title": "Bitcoin’s $67,000 crash puts $57 billion holder cluster at risk as ETF investors flee",
-      "link": "https://cryptoslate.com/bitcoins-67000-crash-puts-57-billion-holder-cluster-at-risk-as-etf-investors-flee/",
-      "source": "CryptoSlate",
-      "at": 1794675703705,
-      "status": "posted"
-    },
-    {
-      "title": "Bitcoin ETFs lose $1 billion for the second week in a row as crypto funds, except one, continue bleeding",
-      "link": "https://www.theblock.co/news/markets/2026-11-14-bitcoin-etfs-lose-1-billion-for-the-second-week-in-a-row-as-crypto-funds-except-one-continue-bleeding-440337",
-      "source": "The Block",
-      "at": 1794691542954,
-      "status": "posted"
-    },
-    {
       "title": "Bitcoin now looks cheap by one measure after $1 billion in ETF outflows",
       "link": "https://cryptoslate.com/bitcoins-new-value-alert-still-needs-proof-that-buyers-can-absorb-supply/",
       "source": "CryptoSlate",
@@ -50,6 +36,13 @@
       "at": 1794921299201,
       "status": "posted",
       "etfFlow": "BTC"
+    },
+    {
+      "title": "BlackRock single-handedly ends Bitcoin ETFs’ $1.9 billion exodus as seven rivals keep bleeding",
+      "link": "https://cryptoslate.com/blackrock-single-handedly-ends-bitcoin-etfs-1-9-billion-exodus-as-seven-rivals-keep-bleeding/",
+      "source": "CryptoSlate",
+      "at": 1794953827889,
+      "status": "posted"
     }
   ]
 }

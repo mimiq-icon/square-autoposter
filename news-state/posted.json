@@ -1,21 +1,6 @@
 {
   "posted": [
     {
-      "title": "Bitcoin now looks cheap by one measure after $1 billion in ETF outflows",
-      "link": "https://cryptoslate.com/bitcoins-new-value-alert-still-needs-proof-that-buyers-can-absorb-supply/",
-      "source": "CryptoSlate",
-      "at": 1794762198775,
-      "status": "posted",
-      "etfFlow": "BTC"
-    },
-    {
-      "title": "Traders claim $6 million profit by spotting BitGo’s public pull request and frontrunning memecoin listing",
-      "link": "https://www.theblock.co/news/defi/2026-11-15-traders-claim-6-million-profit-by-spotting-bitgos-public-pull-request-and-frontrunning-memecoin-listing-440363",
-      "source": "The Block",
-      "at": 1794779069853,
-      "status": "posted"
-    },
-    {
       "title": "Bitcoin crashes near $62,000 over weekend as crypto liquidations topped $1.8 billion",
       "link": "https://cryptoslate.com/bitcoin-crashes-near-62000-over-weekend-as-crypto-liquidations-topped-1-8-billion/",
       "source": "CryptoSlate",
@@ -56,6 +41,13 @@
       "link": "https://www.coindesk.com/markets/2026/11/18/bitcoin-miner-mara-raises-usd185-million-in-debt-after-selling-usd1-billion-btc-to-repay-loans",
       "source": "CoinDesk",
       "at": 1795010035350,
+      "status": "posted"
+    },
+    {
+      "title": "MARA prices $185M debt offering after $1.1B Bitcoin sale",
+      "link": "https://cointelegraph.com/markets/mara-long-ridge-debt-offering-bitcoin-sales?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
+      "source": "Cointelegraph",
+      "at": 1795038810342,
       "status": "posted"
     }
   ]

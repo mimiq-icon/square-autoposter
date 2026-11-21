@@ -1,13 +1,6 @@
 {
   "posted": [
     {
-      "title": "BlackRock single-handedly ends Bitcoin ETFs’ $1.9 billion exodus as seven rivals keep bleeding",
-      "link": "https://cryptoslate.com/blackrock-single-handedly-ends-bitcoin-etfs-1-9-billion-exodus-as-seven-rivals-keep-bleeding/",
-      "source": "CryptoSlate",
-      "at": 1794953827889,
-      "status": "posted"
-    },
-    {
       "title": "Nvidia board rejects Huang comeback despite record $116B quarter",
       "link": "https://cointelegraph.com/markets/nvidia-board-rejects-huang-comeback-amid-record-116b-quarter?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
       "source": "Cointelegraph",
@@ -70,6 +63,13 @@
       "at": 1795205149904,
       "status": "posted",
       "etfFlow": "BTC"
+    },
+    {
+      "title": "DCG’s Zcash miner Fortitude clears vote for Nasdaq listing as ZEC retreats from all-time high",
+      "link": "https://www.theblock.co/news/business/2026-11-20-dcgs-zcash-miner-fortitude-clears-vote-nasdaq-listing-zec-retreats-all-time-high-444784",
+      "source": "The Block",
+      "at": 1795224432654,
+      "status": "posted"
     }
   ]
 }

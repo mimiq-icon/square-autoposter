@@ -1,13 +1,6 @@
 {
   "posted": [
     {
-      "title": "Nvidia board rejects Huang comeback despite record $116B quarter",
-      "link": "https://cointelegraph.com/markets/nvidia-board-rejects-huang-comeback-amid-record-116b-quarter?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
-      "source": "Cointelegraph",
-      "at": 1794975258989,
-      "status": "posted"
-    },
-    {
       "title": "Bitcoin miner MARA raises $185 million in debt after selling $1 billion BTC to repay loans",
       "link": "https://www.coindesk.com/markets/2026/11/18/bitcoin-miner-mara-raises-usd185-million-in-debt-after-selling-usd1-billion-btc-to-repay-loans",
       "source": "CoinDesk",
@@ -69,6 +62,13 @@
       "link": "https://www.theblock.co/news/business/2026-11-20-dcgs-zcash-miner-fortitude-clears-vote-nasdaq-listing-zec-retreats-all-time-high-444784",
       "source": "The Block",
       "at": 1795224432654,
+      "status": "posted"
+    },
+    {
+      "title": "XRP falls 10% as long bets unwind and ETF assets slip below $1 billion",
+      "link": "https://www.coindesk.com/markets/2026/11/21/xrp-falls-10-as-long-bets-unwind-and-etf-assets-slip-below-usd1-billion",
+      "source": "CoinDesk",
+      "at": 1795254108029,
       "status": "posted"
     }
   ]

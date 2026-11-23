@@ -1,21 +1,6 @@
 {
   "posted": [
     {
-      "title": "BlackRock’s IBIT loses record $541M amid Anthropic market debut",
-      "link": "https://cointelegraph.com/markets/blackrock-ibit-record-single-day-outflow?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
-      "source": "Cointelegraph",
-      "at": 1795174027382,
-      "status": "posted"
-    },
-    {
-      "title": "US spot Bitcoin ETFs are almost $1 billion short of a record monthly outflow at $3.5 billion",
-      "link": "https://cryptoslate.com/blackrock-leads-582-million-bitcoin-etf-exodus-as-november-withdrawals-approach-3-5-billion/",
-      "source": "CryptoSlate",
-      "at": 1795205149904,
-      "status": "posted",
-      "etfFlow": "BTC"
-    },
-    {
       "title": "DCG’s Zcash miner Fortitude clears vote for Nasdaq listing as ZEC retreats from all-time high",
       "link": "https://www.theblock.co/news/business/2026-11-20-dcgs-zcash-miner-fortitude-clears-vote-nasdaq-listing-zec-retreats-all-time-high-444784",
       "source": "The Block",
@@ -50,6 +35,13 @@
       "at": 1795424281441,
       "status": "posted",
       "etfFlow": "BTC"
+    },
+    {
+      "title": "Robinhood Chain pays Ethereum 70% more than Base despite collecting 64% less in fees",
+      "link": "https://cryptoslate.com/robinhood-chain-pays-ethereum-70-more-than-base-despite-collecting-64-less-in-fees/",
+      "source": "CryptoSlate",
+      "at": 1795468571687,
+      "status": "posted"
     }
   ]
 }

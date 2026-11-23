@@ -1,34 +1,6 @@
 {
   "posted": [
     {
-      "title": "Bloomberg’s James Seyffart: Wall Street Bought $4.2 BILLION BTC in Q3",
-      "link": "https://bitcoinmagazine.com/videos/bloombergs-james-seyffart-wall-street-bought-4-2-billion-btc-in-q3",
-      "source": "Bitcoin Magazine",
-      "at": 1795058383460,
-      "status": "posted"
-    },
-    {
-      "title": "Trump Media wants to clear $884 million of debt without selling its bitcoin",
-      "link": "https://www.coindesk.com/markets/2026/11/19/trump-media-wants-to-clear-usd884-million-of-debt-without-selling-its-bitcoin",
-      "source": "CoinDesk",
-      "at": 1795093001837,
-      "status": "posted"
-    },
-    {
-      "title": "Institutions are Piling Into Bitcoin ETFs, Pushing Holdings to a Record",
-      "link": "https://bitcoinmagazine.com/markets/institutional-bitcoin-etf-holdings",
-      "source": "Bitcoin Magazine",
-      "at": 1795123635162,
-      "status": "posted"
-    },
-    {
-      "title": "Binance’s $6.5B freeze order, Hong Kong ‘suspicious’ of HYPE: Asia Express",
-      "link": "https://cointelegraph.com/magazine/binances-65b-freeze-order-hong-kong-suspicious-of-hype-asia-express?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
-      "source": "Cointelegraph",
-      "at": 1795143982536,
-      "status": "posted"
-    },
-    {
       "title": "BlackRock’s IBIT loses record $541M amid Anthropic market debut",
       "link": "https://cointelegraph.com/markets/blackrock-ibit-record-single-day-outflow?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
       "source": "Cointelegraph",
@@ -70,6 +42,14 @@
       "source": "CoinDesk",
       "at": 1795302571065,
       "status": "posted"
+    },
+    {
+      "title": "Bitcoin ETFs shed $1.8B in third-largest weekly outflow",
+      "link": "https://cointelegraph.com/markets/bitcoin-etfs-third-largest-weekly-outflows-1-8-billion?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
+      "source": "Cointelegraph",
+      "at": 1795424281441,
+      "status": "posted",
+      "etfFlow": "BTC"
     }
   ]
 }

@@ -1,13 +1,6 @@
 {
   "posted": [
     {
-      "title": "DCG’s Zcash miner Fortitude clears vote for Nasdaq listing as ZEC retreats from all-time high",
-      "link": "https://www.theblock.co/news/business/2026-11-20-dcgs-zcash-miner-fortitude-clears-vote-nasdaq-listing-zec-retreats-all-time-high-444784",
-      "source": "The Block",
-      "at": 1795224432654,
-      "status": "posted"
-    },
-    {
       "title": "XRP falls 10% as long bets unwind and ETF assets slip below $1 billion",
       "link": "https://www.coindesk.com/markets/2026/11/21/xrp-falls-10-as-long-bets-unwind-and-etf-assets-slip-below-usd1-billion",
       "source": "CoinDesk",
@@ -41,6 +34,13 @@
       "link": "https://cryptoslate.com/robinhood-chain-pays-ethereum-70-more-than-base-despite-collecting-64-less-in-fees/",
       "source": "CryptoSlate",
       "at": 1795468571687,
+      "status": "posted"
+    },
+    {
+      "title": "Aave’s USDC loans surge 36% to $2.6 billion as liquid collateral share plunges",
+      "link": "https://cryptoslate.com/aaves-usdc-loans-surge-36-to-2-6-billion-as-liquid-collateral-share-plunges/",
+      "source": "CryptoSlate",
+      "at": 1795499878615,
       "status": "posted"
     }
   ]

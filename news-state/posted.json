@@ -1,13 +1,6 @@
 {
   "posted": [
     {
-      "title": "Bitcoin rebounds above $60,000 after $1.8 billion crypto liquidation wave",
-      "link": "https://www.coindesk.com/markets/2026/11/21/bitcoin-bounces-9-from-two-year-low-to-retake-usd60-000-as-traders-eye-monday-s-stock-open",
-      "source": "CoinDesk",
-      "at": 1795302571065,
-      "status": "posted"
-    },
-    {
       "title": "Bitcoin ETFs shed $1.8B in third-largest weekly outflow",
       "link": "https://cointelegraph.com/markets/bitcoin-etfs-third-largest-weekly-outflows-1-8-billion?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
       "source": "Cointelegraph",
@@ -35,6 +28,14 @@
       "source": "CryptoSlate",
       "at": 1795541721958,
       "status": "posted"
+    },
+    {
+      "title": "Bitcoin ETFs near $5B in record monthly outflows amid AI stock rout",
+      "link": "https://cointelegraph.com/markets/bitcoin-etfs-near-record-5-billion-monthly-outflows?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
+      "source": "Cointelegraph",
+      "at": 1795610633735,
+      "status": "posted",
+      "etfFlow": "BTC"
     }
   ]
 }

@@ -1,20 +1,6 @@
 {
   "posted": [
     {
-      "title": "Robinhood Chain pays Ethereum 70% more than Base despite collecting 64% less in fees",
-      "link": "https://cryptoslate.com/robinhood-chain-pays-ethereum-70-more-than-base-despite-collecting-64-less-in-fees/",
-      "source": "CryptoSlate",
-      "at": 1795468571687,
-      "status": "posted"
-    },
-    {
-      "title": "Aave’s USDC loans surge 36% to $2.6 billion as liquid collateral share plunges",
-      "link": "https://cryptoslate.com/aaves-usdc-loans-surge-36-to-2-6-billion-as-liquid-collateral-share-plunges/",
-      "source": "CryptoSlate",
-      "at": 1795499878615,
-      "status": "posted"
-    },
-    {
       "title": "BlackRock drives Bitcoin ETFs to worst month on record as crypto fund withdrawals near $6 billion",
       "link": "https://cryptoslate.com/blackrock-drives-bitcoin-etfs-to-worst-month-on-record-as-crypto-fund-withdrawals-near-6-billion/",
       "source": "CryptoSlate",
@@ -50,6 +36,13 @@
       "at": 1795705583009,
       "status": "posted",
       "etfFlow": "BTC"
+    },
+    {
+      "title": "JPMorgan flags bitcoin ‘capitulation,’ Democrats push back on SEC’s crypto plans, and more",
+      "link": "https://www.theblock.co/newsletters/the-daily/2026-11-26-jpmorgan-bitcoin-capitulation-democrats-sec-crypto-plans-more-news-447025",
+      "source": "The Block",
+      "at": 1795767479166,
+      "status": "posted"
     }
   ]
 }

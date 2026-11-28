@@ -97,7 +97,8 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           # Approval: on by default when Telegram is configured. 'off' publishes
           # without asking. RESEARCH_APPROVAL_WAIT_MIN: '120' to change the wait.
-          # RESEARCH_APPROVAL: 'on'
+          # v11.14: off by default. Set the repo variable RESEARCH_APPROVAL to 'on' to be asked again.
+          RESEARCH_APPROVAL: ${{ vars.RESEARCH_APPROVAL || 'off' }}
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'true' }}
         run: node post.mjs
 

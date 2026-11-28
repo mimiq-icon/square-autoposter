@@ -194,6 +194,18 @@ test("weekly 3: no Telegram => refuses (nothing is ever published unapproved); d
   check("dry run: nothing sent or posted, draft saved", r.code === 0 && posts(w).length === 0 && lines(w, "telegram").length === 0 && fs.existsSync(path.join(pc, "weekly-draft.json")), r.out.slice(-600));
 });
 
+test("weekly 4 (v11.14): WEEKLY_APPROVAL=off publishes the validated article with no Telegram at all", { skip: !hasGit, timeout: 120000 }, async () => {
+  let w = world(SEEDED), pc = w.clone("pc");
+  let r = await run(pc, w.mocklog, "weekly-approve", { MOCK_AI_TEXT: ARTICLE, WEEKLY_APPROVAL: "off" });
+  check("exit 0, article validated, one article post, nothing sent to Telegram", r.code === 0 && /article validated/.test(r.out) && posts(w).length === 1 && lines(w, "telegram").length === 0, r.out.slice(-1200));
+  w = world(SEEDED); pc = w.clone("pc");
+  r = await run(pc, w.mocklog, "weekly-approve", { MOCK_AI_TEXT: ARTICLE.replace("$82,950.00", "$91,230.00"), WEEKLY_APPROVAL: "off" });
+  check("an article with an invented number still falls back to the data template before it publishes", r.code === 0 && /using the data template/.test(r.out) && posts(w).length === 1, r.out.slice(-1200));
+  w = world(SEEDED); pc = w.clone("pc");
+  r = await run(pc, w.mocklog, "weekly-approve", { MOCK_AI_TEXT: ARTICLE, WEEKLY_APPROVAL: "off", DRY_RUN: "true" });
+  check("dry run with approval off still posts nothing", r.code === 0 && posts(w).length === 0, r.out.slice(-600));
+});
+
 // ---------------- v11.5 (Stage 2): price cross-check, context line, no chatter ----------------
 
 test("alerts 7: the two price sources agree -> the alert posts and says so", { skip: !hasGit, timeout: 120000 }, async () => {

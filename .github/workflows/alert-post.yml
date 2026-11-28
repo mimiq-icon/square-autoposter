@@ -72,7 +72,8 @@ jobs:
           # ALERT_MAX_PER_DAY: '20'
           # ALERT_CHART: 'off'             # no card/chart image
           # ALERT_CHART_HOURS: '24'        # price window on the alert card (default: the day's range)
-          # ALERT_APPROVAL: 'all'          # needs the two Telegram secrets
+          # v11.14: off by default. Set the repo variable ALERT_APPROVAL to 'all' to be asked again.
+          ALERT_APPROVAL: ${{ vars.ALERT_APPROVAL || 'off' }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: node post.mjs

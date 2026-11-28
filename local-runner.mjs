@@ -154,6 +154,10 @@ export function buildChildEnv(baseEnv, { dryRun = false, gitOk = true, mode = "n
   // v11.5: cloud models first, Ollama last. A 3B model on a laptop wrote the
   // flattest, most machine-sounding copy; it is now the offline backup only.
   // Set AI_PROVIDER_ORDER=ollama,groq in .env to put it first again.
+  // v11.14: no approval taps by default. An explicit NEWS_APPROVAL / ALERT_APPROVAL
+  // in .env still wins. Sensitive single-outlet stories still wait for a second outlet.
+  env.NEWS_APPROVAL = env.NEWS_APPROVAL || "off";
+  env.ALERT_APPROVAL = env.ALERT_APPROVAL || "off";
   if (dryRun) env.DRY_RUN = "true"; // --dry-run forces it; otherwise a DRY_RUN in .env is respected
   return env;
 }

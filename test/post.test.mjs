@@ -545,9 +545,17 @@ describe("DAILY_ROTATION: weighted to the formats that earned reach", () => {
   test("educational is out of the daily rotation (the research desk owns it)", () => {
     assert.ok(!DAILY_ROTATION.includes("educational"));
   });
-  test("mover and spotlight each appear twice", () => {
+  test("mover twice, spotlight three times", () => {
     assert.equal(DAILY_ROTATION.filter((s) => s === "mover").length, 2);
-    assert.equal(DAILY_ROTATION.filter((s) => s === "spotlight").length, 2);
+    assert.equal(DAILY_ROTATION.filter((s) => s === "spotlight").length, 3);
+  });
+  test("digest is out of the 08:30 rotation (top-movers-digest.yml still forces it at 14:00)", () => {
+    assert.ok(!DAILY_ROTATION.includes("digest"));
+  });
+  test("no style repeats on consecutive days, including the wrap from the last entry to the first", () => {
+    for (let i = 0; i < DAILY_ROTATION.length; i++) {
+      assert.notEqual(DAILY_ROTATION[i], DAILY_ROTATION[(i + 1) % DAILY_ROTATION.length]);
+    }
   });
 });
 

@@ -11,11 +11,14 @@ name: Comment Digest
 # REQUIRES: SQUARE_CREATOR_ID secret — find it in your Binance Square profile URL.
 # Go to your Square profile, copy the number in the URL (e.g. binance.com/square/123456789).
 
+# v11.14: SWITCHED OFF. It failed on every scheduled run (all jobs), the cause was
+# never confirmed (the likely suspect is the unofficial binance-square-cli install,
+# or a missing SQUARE_CREATOR_ID secret), and it only drafts replies you would type
+# yourself. The schedule is removed so it stops sending failure emails; the file is
+# kept and can still be run by hand from the Actions tab. To restore the daily run,
+# put back:   schedule:
+#               - cron: '0 16 * * *'
 on:
-  schedule:
-    # 16:00 UTC daily = 18:00 Harare (CAT, UTC+2)
-    # Afternoon — catches comments that came in during the day
-    - cron: '0 16 * * *'
   workflow_dispatch: {}
 
 permissions:

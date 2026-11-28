@@ -1,12 +1,23 @@
 # The Tape (square-autoposter): project state
 
-**Version:** v11.12 (closing-question test, settings guard)  |  **Tests:** 575/575 passing (`node --test`; 17 skip without `@resvg/resvg-js`)  |  **Pushed:** yes — `origin/main` is in sync; check `git log -1` for the tip
+**Version:** v11.14 (approvals off, Comment Digest off, rotation: digest slot -> spotlight)  |  **Tests:** 575/575 passing (`node --test`; 17 skip without `@resvg/resvg-js`)  |  **Pushed:** yes — `origin/main` is in sync; check `git log -1` for the tip
 
 ## What it is
 Binance Square auto-poster: news, price alerts, research/education, weekly AI article. Telegram approval flow, branded image cards (SVG -> PNG), git-shared state in `news-state/`.
 
 ## Source of truth
 GitHub `main`. Commit local changes from the PC with `save-and-push.bat`; do not upload zips through the GitHub web UI (it flattens folders and has broken the suite twice).
+
+## Done this pass (v11.14)
+- Approval taps off everywhere by default (workflows read `vars.NEWS_APPROVAL` / `ALERT_APPROVAL` / `RESEARCH_APPROVAL` / `WEEKLY_APPROVAL`, default `off`; PC runner defaults news and alerts to `off`). Added `WEEKLY_APPROVAL=off` for the weekly article. Sensitive single-outlet stories still wait for a second outlet.
+- Comment Digest: schedule removed (manual run only); it failed every scheduled run, cause never confirmed.
+- TODO: add `# WEEKLY_APPROVAL=off   # off | on` to the real `.env.example` (the settings guard test requires it).
+
+## Done this pass (v11.13)
+- Mined two Telegram exports (Coin Post, Watcher Guru) for what earns reactions; trailing-100-median lift. "digest/daily/summary" was the weakest format in Coin Post, so the `digest` entry in `DAILY_ROTATION` is now `spotlight`. Not a Square result: judge from `scorecard.csv`.
+- `top-movers-digest.yml` still forces a digest daily at 14:00 UTC; the open question is whether to keep that daily.
+- The uploaded `main` snapshot has the stale 42-line `.env.example` again (2 failing tests in `test/env-docs.test.mjs`); restore the v11.12 file from the PC.
+- Comment Digest workflow failed (cause unknown, needs the failed step's log).
 
 ## Done this pass (v11.12)
 - Reviewed the v11.11 snapshot: 539/539 green, nothing from earlier stages lost, strays gone.

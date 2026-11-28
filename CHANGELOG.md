@@ -2,6 +2,22 @@
 
 Reconstructed from the version-tagged comments already in `post.mjs` and `scan.mjs` (every change in this codebase has always been commented in place with a `vN` marker) plus this pass's own work. If you're looking for *why* a particular line exists, search the source for its version tag first — the reasoning usually lives right there.
 
+## v11.14 (approval taps off; weekly article can publish unattended; Comment Digest switched off)
+
+- **No more approval taps, anywhere.** The shipped workflows now set `NEWS_APPROVAL`, `ALERT_APPROVAL`, `RESEARCH_APPROVAL` and `WEEKLY_APPROVAL` from a repo variable of the same name, defaulting to `off`. The PC runner (`buildChildEnv`) defaults `NEWS_APPROVAL` and `ALERT_APPROVAL` to `off`; a value in `.env` still wins. To be asked again, set the variable (`NEWS_APPROVAL=sensitive|all`, `ALERT_APPROVAL=all`, `RESEARCH_APPROVAL=on`, `WEEKLY_APPROVAL=on`). The code defaults are unchanged, so a copy of the code run with no workflow still asks when Telegram is configured.
+- **Still enforced with approval off:** a sensitive claim from one outlet with no official source waits for a second outlet (`decideNewsAction`); every AI text still has to pass its validation gate and falls back to the template; the daily caps and gaps; the `dyor` / not-financial-advice check.
+- **`WEEKLY_APPROVAL=off`** (new, in `runWeeklyApproveMode`): publishes the validated article without Telegram. Unset keeps the old behaviour (refuses without Telegram, waits for the tap). The weekly article is the longest post, so it is the one most worth reading after the fact.
+- **Comment Digest has no schedule.** It failed on every scheduled run with every job red, the cause was never confirmed, and it only drafts replies. `workflow_dispatch` stays so it can be run by hand; the file explains how to restore the cron.
+- **Tests:** `test/approval-off.test.mjs` (workflow defaults, Comment Digest has no schedule), a weekly e2e for `WEEKLY_APPROVAL=off` (clean, template fallback, dry run), a `buildChildEnv` test.
+- **Needs one line in `.env.example`:** `WEEKLY_APPROVAL` is a new setting the code reads, so `test/env-docs.test.mjs` wants it documented. Add `# WEEKLY_APPROVAL=off   # off | on` to the real file.
+
+## v11.13 (daily rotation: digest slot becomes a third spotlight)
+
+- **Evidence.** Parsed two Telegram exports (Coin Post, Watcher Guru; about 17.6k original posts) and scored each post against the median of the channel's previous 100 posts, since reaction counts drift by an order of magnitude over the years. In Coin Post the terms "daily", "digest" and "summary" were the three weakest, at -0.28 to -0.48 log2 lift on 150-280 posts each. Regulatory and institutional topics (ETF, SEC, Fed, CFTC, stablecoin) also trailed in both channels; that is a topic effect, not changed here.
+- **Change.** `DAILY_ROTATION`: the `digest` entry is now `spotlight` (spotlights sit every third day; no style repeats on consecutive days, including the wrap). Still 9 entries, so the 45-day vibe cycle holds.
+- **Not changed.** `top-movers-digest.yml` still forces a digest at 14:00 UTC daily, so the format still posts every day; that is the larger exposure if the digest does underperform on Square.
+- **Caveats.** Telegram reactions are not Square views. The closing-question effect could not be tested (84 Coin Post posts end with a question, none in Watcher Guru). Judge this from `scorecard.csv`, not from the exports.
+
 ## v11.12 (testing the closing question; and the settings file that went stale again)
 
 v11.11 brought the closing question back on market posts on the strength of the first live numbers. Those numbers do not carry that conclusion, and this pass says so and builds the way to find out. It also found a regression that had happened twice.

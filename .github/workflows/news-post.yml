@@ -103,6 +103,9 @@ jobs:
           # posted sensitive stories without asking. With them set, NEWS_APPROVAL
           # defaults to 'sensitive' and this runner asks you first (it then waits
           # up to NEWS_APPROVAL_WAIT_MIN, using Actions minutes).
+          # v11.14: off by default. Set the repo variable NEWS_APPROVAL to 'sensitive' or 'all' to be asked again.
+          # Sensitive single-outlet stories still wait for a second outlet whatever this says.
+          NEWS_APPROVAL: ${{ vars.NEWS_APPROVAL || 'off' }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           # NEWS_MAX_PER_DAY: '40'        # hard daily cap (default 40). Binance allows 100 API posts/day in total, shared by every post type

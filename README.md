@@ -85,7 +85,7 @@ GitHub runs it from `news-post.yml` every hour. Manual runs default to **dry run
 | `NEWS_REQUIRE_AI` | false | `true` = skip a story rather than post the plain-headline fallback. |
 | `NEWS_EXTRA_FEEDS` | none | Add feeds without editing code: `Name|https://url,Name2|https://url2`. |
 | `NEWS_FEEDS_OFF` | none | Drop built-in feeds by name, e.g. `CryptoSlate` (a feed that answers HTTP 403 on your PC). |
-| `NEWS_APPROVAL` | `sensitive` if Telegram is set up, else `off` | `off` / `sensitive` / `all`. Which stories wait for your tap on Telegram. |
+| `NEWS_APPROVAL` | `off` in the shipped workflows and the PC runner (v11.14); `sensitive` is the in-code default if neither sets it | `off` / `sensitive` / `all`. Which stories wait for your tap on Telegram. |
 | `NEWS_APPROVAL_WAIT_MIN` | 8 | How long a draft waits for a tap. No tap = not posted. |
 | `NEWS_GIT_SYNC` | `true` in `news-post.yml`; automatic on the PC runner | Claim stories through git so two machines can't double-post. Needs the folder to be a git clone. |
 | `NEWS_CROSSPOST_X` | false | Also post to X (needs the 4 `TWITTER_*` secrets; X bills per post). |

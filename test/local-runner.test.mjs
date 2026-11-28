@@ -88,6 +88,14 @@ describe("buildChildEnv", () => {
     assert.equal(buildChildEnv({}, { gitOk: false }).NEWS_GIT_SYNC, "false");
     assert.equal(buildChildEnv({}, { dryRun: true }).DRY_RUN, "true");
   });
+  test("v11.14: approval taps are off by default for news and alerts; an explicit .env value still wins", () => {
+    const d = buildChildEnv({}, {});
+    assert.equal(d.NEWS_APPROVAL, "off");
+    assert.equal(d.ALERT_APPROVAL, "off");
+    const e = buildChildEnv({ NEWS_APPROVAL: "sensitive", ALERT_APPROVAL: "all" }, {});
+    assert.equal(e.NEWS_APPROVAL, "sensitive");
+    assert.equal(e.ALERT_APPROVAL, "all");
+  });
   test("a DRY_RUN=true in .env is NOT silently turned off", () => {
     assert.equal(buildChildEnv({ DRY_RUN: "true" }, {}).DRY_RUN, "true");
     assert.equal(buildChildEnv({}, {}).DRY_RUN, undefined);

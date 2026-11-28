@@ -1501,7 +1501,14 @@ async function callAiWithFallback(prompt, allowedSymbols, vibeName) {
 // this doesn't loosen the compliance gate at all, just varies its wording.
 // v11.11: see the rotation comment in runDailyMode. Exported for the test that
 // keeps it coprime with the vibe count and free of "educational".
-export const DAILY_ROTATION = ["macro", "spotlight", "snapshot", "mover", "spotlight", "snapshot", "trending", "digest", "mover"];
+// v11.13: the "digest" slot became a third "spotlight". Reaction data from two
+// Telegram crypto news channels (Coin Post, Watcher Guru; ~17.6k posts, scored
+// against a trailing-100-post median because the reaction scale drifts) put
+// "daily"/"digest"/"summary" posts last in Coin Post (-0.28 to -0.48 log2 lift,
+// 150-280 posts each). Different audience from Square, so this is a bet to be
+// read off scorecard.csv, not a result. The digest FORMAT is untouched:
+// top-movers-digest.yml still forces it daily at 14:00 UTC.
+export const DAILY_ROTATION = ["macro", "spotlight", "snapshot", "mover", "spotlight", "snapshot", "trending", "spotlight", "mover"];
 
 const DISCLAIMER_VARIANTS = [
   "Not financial advice.",
@@ -4076,7 +4083,10 @@ async function runWeeklyApproveMode(dayIndex) {
   const dry = isDryRun();
   console.log(`\n=== WEEKLY ARTICLE (AI-written, Telegram approval)${dry ? " — DRY RUN" : ""} ===`);
   if (!dry && !process.env.BINANCE_SQUARE_OPENAPI_KEY) throw new Error("Missing BINANCE_SQUARE_OPENAPI_KEY environment variable.");
-  if (!dry && !telegramConfigured()) {
+  // v11.14: WEEKLY_APPROVAL=off publishes the validated article without asking.
+  // Unset keeps the old behaviour exactly (needs Telegram, waits for your tap).
+  const weeklyAutoPublish = /^(off|none|false|no|0)$/i.test(String(process.env.WEEKLY_APPROVAL ?? "").trim());
+  if (!dry && !weeklyAutoPublish && !telegramConfigured()) {
     throw new Error("Telegram is not configured (TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID). Without it the article cannot be shown to you for approval, so nothing is written or posted.");
   }
 
@@ -4117,6 +4127,12 @@ async function runWeeklyApproveMode(dayIndex) {
     return;
   }
 
+  if (weeklyAutoPublish) {
+    console.log("WEEKLY_APPROVAL=off: publishing without asking.");
+    const id = await publishWeeklyArticle({ title: article.title, body: article.body, dayIndex });
+    console.log(id ? `SUCCESS — posted! View at: https://www.binance.com/square/post/${id}` : "Post likely succeeded, but no ID was returned in the response.");
+    return;
+  }
   const token = process.env.TELEGRAM_BOT_TOKEN, chatId = process.env.TELEGRAM_CHAT_ID;
   const sent = await sendTextChunks({ token, chatId, text: `${article.title}\n\n${article.body}` });
   const waitMin = envNumber("WEEKLY_APPROVAL_WAIT_MIN", 240) || 240;

@@ -63,6 +63,8 @@ jobs:
           COINGECKO_API_KEY: ${{ secrets.COINGECKO_API_KEY }}
           # Scheduled runs are live; manual runs default to dry-run.
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'true' }}
+          # v11.14: off by default (publishes without asking). Set the repo variable WEEKLY_APPROVAL to 'on' to be asked again.
+          WEEKLY_APPROVAL: ${{ vars.WEEKLY_APPROVAL || 'off' }}
           WEEKLY_APPROVAL_WAIT_MIN: ${{ github.event.inputs.wait_minutes || '240' }}
           # Optional teaser on X (needs the TWITTER_* secrets):
           # TWITTER_API_KEY: ${{ secrets.TWITTER_API_KEY }}
